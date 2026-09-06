@@ -1,0 +1,11 @@
+{
+  "name": "Concepts (Obsidian plugin)",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "esbuild-dev",
+      "command": "npm run dev",
+      "description": "esbuild watch build: rebuilds main.js whenever files under src/ change."
+    }
+  ]
+}
