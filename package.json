@@ -1,0 +1,27 @@
+{
+  "name": "obsidian-concepts",
+  "version": "0.1.0",
+  "description": "Manage and link concepts stored in Obsidian callouts",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "concepts",
+    "math-notes"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "builtin-modules": "^5.3.0",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.13.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}

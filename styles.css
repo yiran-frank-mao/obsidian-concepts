@@ -1,0 +1,51 @@
+.callout {
+  position: relative;
+}
+
+.concepts-add-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-s);
+  box-shadow: none;
+  color: var(--text-muted);
+  display: flex;
+  height: 26px;
+  justify-content: center;
+  opacity: 0;
+  padding: 4px;
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+  width: 26px;
+  z-index: 2;
+}
+
+.callout:hover > .concepts-add-button,
+.concepts-add-button:focus-visible,
+.concepts-add-button.is-registered {
+  opacity: 1;
+}
+
+.concepts-add-button:hover,
+.concepts-add-button:focus-visible {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.concepts-add-button.is-registered {
+  color: var(--text-success);
+  cursor: default;
+}
+
+.concepts-add-button svg {
+  height: 16px;
+  width: 16px;
+}
+
+@media (hover: none) {
+  .concepts-add-button {
+    opacity: 1;
+  }
+}
