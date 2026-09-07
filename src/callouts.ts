@@ -57,6 +57,25 @@ export function calloutsInRange(
   );
 }
 
+export function resolveSubmittedCallout(
+  callouts: CalloutLocation[],
+  initialLocation: CalloutLocation,
+  stableBlockId?: string
+): CalloutLocation | undefined {
+  if (stableBlockId) {
+    return callouts.find((candidate) => candidate.blockId === stableBlockId);
+  }
+  return callouts.find(
+    (candidate) =>
+      candidate.startLine === initialLocation.startLine &&
+      candidate.title === initialLocation.title
+  ) ?? callouts.find(
+    (candidate) =>
+      candidate.title === initialLocation.title &&
+      candidate.type.toLocaleLowerCase() === initialLocation.type.toLocaleLowerCase()
+  );
+}
+
 export function insertBlockId(
   source: string,
   callout: CalloutLocation,

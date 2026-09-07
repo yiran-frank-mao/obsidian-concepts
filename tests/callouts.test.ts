@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { calloutsInRange, insertBlockId, parseCallouts } from "../src/callouts";
+import {
+  calloutsInRange,
+  insertBlockId,
+  parseCallouts,
+  resolveSubmittedCallout
+} from "../src/callouts";
 
 describe("parseCallouts", () => {
   const note = [
@@ -45,6 +50,34 @@ describe("parseCallouts", () => {
   it("uses the callout type when no custom title exists", () => {
     expect(parseCallouts("> [!topological-space]\n> Content")[0].title)
       .toBe("Topological Space");
+  });
+
+  it("resolves a moved registered callout by its stable block ID", () => {
+    const initial = parseCallouts(
+      "> [!definition] Original title\n> Content\n\n^concept-stable"
+    )[0];
+    const moved = parseCallouts([
+      "> [!definition] Duplicate title",
+      "> Wrong callout.",
+      "",
+      "^concept-other",
+      "",
+      "> [!theorem] Renamed concept",
+      "> Moved and edited.",
+      "",
+      "^concept-stable"
+    ].join("\n"));
+
+    expect(resolveSubmittedCallout(moved, initial, "concept-stable")).toEqual(moved[1]);
+  });
+
+  it("does not fall back to a title match when a stable block ID is missing", () => {
+    const initial = parseCallouts(
+      "> [!definition] Shared title\n> Content\n\n^concept-stable"
+    )[0];
+    const candidates = parseCallouts("> [!definition] Shared title\n> Different callout");
+
+    expect(resolveSubmittedCallout(candidates, initial, "concept-stable")).toBeUndefined();
   });
 });
 

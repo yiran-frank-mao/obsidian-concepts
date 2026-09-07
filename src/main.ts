@@ -8,7 +8,13 @@ import {
   setIcon,
   TFile
 } from "obsidian";
-import { calloutsInRange, createBlockId, insertBlockId, parseCallouts } from "./callouts";
+import {
+  calloutsInRange,
+  createBlockId,
+  insertBlockId,
+  parseCallouts,
+  resolveSubmittedCallout
+} from "./callouts";
 import { ConceptStore } from "./concept-store";
 import { formatLinkUpdateNotice } from "./links";
 import { ConceptChooserModal, ConceptFormModal } from "./modals";
@@ -153,29 +159,19 @@ export default class ConceptsPlugin extends Plugin {
         cls: "concepts-add-button",
         attr: {
           "aria-label": location.blockId && this.store.byBlockId(location.blockId)
-            ? "Concept already registered"
+            ? "Update this concept"
             : "Add this callout as a concept",
           type: "button"
         }
       });
       const registered = Boolean(location.blockId && this.store.byBlockId(location.blockId));
-      // #region agent log
-      try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "A-B", location: "src/main.ts:decorateCallouts", message: "Resolved callout button state", data: { blockId: location.blockId ?? null, registered }, timestamp: Date.now() })}\n`); } catch {}
-      // #endregion
       setIcon(button, registered ? "check" : "book-plus");
       button.toggleClass("is-registered", registered);
       button.addEventListener("mousedown", (event) => event.stopPropagation());
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        // #region agent log
-        try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "A", location: "src/main.ts:decorateCallouts.click", message: "Callout action clicked", data: { blockId: location.blockId ?? null, registered, branch: registered ? "notice" : "form" }, timestamp: Date.now() })}\n`); } catch {}
-        // #endregion
-        if (registered) {
-          new Notice(`“${location.title}” is already a concept.`);
-        } else {
-          void this.openConceptForm(file, location);
-        }
+        void this.openConceptForm(file, location);
       });
     });
   }
@@ -201,27 +197,30 @@ export default class ConceptsPlugin extends Plugin {
     file: TFile | null,
     initialLocation: CalloutLocation
   ): Promise<void> {
-    // #region agent log
-    try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "B-C", location: "src/main.ts:openConceptForm", message: "Opening concept form", data: { hasFile: Boolean(file), blockId: initialLocation.blockId ?? null, initiallyRegistered: Boolean(initialLocation.blockId && this.store.byBlockId(initialLocation.blockId)) }, timestamp: Date.now() })}\n`); } catch {}
-    // #endregion
     if (!file) return;
-    new ConceptFormModal(this.app, initialLocation.title, async ({ name, aliases }) => {
+    const existing = initialLocation.blockId
+      ? this.store.byBlockId(initialLocation.blockId)
+      : undefined;
+    new ConceptFormModal(this.app, existing?.name ?? initialLocation.title, async ({ name, aliases }) => {
       const source = await this.app.vault.read(file);
       const callouts = parseCallouts(source);
-      const location = callouts.find(
-        (candidate) =>
-          candidate.startLine === initialLocation.startLine &&
-          candidate.title === initialLocation.title
-      ) ?? callouts.find(
-        (candidate) =>
-          candidate.title === initialLocation.title &&
-          candidate.type.toLocaleLowerCase() === initialLocation.type.toLocaleLowerCase()
-      );
-      // #region agent log
-      try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "C-D", location: "src/main.ts:openConceptForm.submit", message: "Resolved submitted callout", data: { found: Boolean(location), initialBlockId: initialLocation.blockId ?? null, resolvedBlockId: location?.blockId ?? null, existingConcept: Boolean(location?.blockId && this.store.byBlockId(location.blockId)) }, timestamp: Date.now() })}\n`); } catch {}
-      // #endregion
+      const location = resolveSubmittedCallout(callouts, initialLocation, existing?.blockId);
       if (!location) {
         new Notice("Concepts could not find that callout. It may have moved or changed.");
+        return;
+      }
+
+      if (existing) {
+        const result = await this.store.updateConcept(existing.blockId, {
+          name,
+          aliases,
+          sourcePath: file.path,
+          calloutType: location.type
+        });
+        const linkNotice = result.moved && this.settings.updateVaultLinks
+          ? ` ${formatLinkUpdateNotice(result.linksUpdated)}`
+          : "";
+        new Notice(`Updated concept “${name}”.${linkNotice}`);
         return;
       }
 
@@ -236,6 +235,9 @@ export default class ConceptsPlugin extends Plugin {
       }
       await this.store.create(name, aliases, file.path, blockId, location.type);
       new Notice(`Added concept “${name}”.`);
+    }, {
+      aliases: existing?.aliases,
+      mode: existing ? "update" : "add"
     }).open();
   }
 
@@ -325,9 +327,6 @@ export default class ConceptsPlugin extends Plugin {
   }
 
   private scheduleFileReconcile(file: TFile): void {
-    // #region agent log
-    try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "E", location: "src/main.ts:scheduleFileReconcile", message: "Scheduled file reconcile", data: { replacedPendingTimer: this.reconcileTimer !== undefined, pathLength: file.path.length }, timestamp: Date.now() })}\n`); } catch {}
-    // #endregion
     if (this.reconcileTimer !== undefined) window.clearTimeout(this.reconcileTimer);
     this.reconcileTimer = window.setTimeout(() => {
       this.reconcileTimer = undefined;
@@ -339,13 +338,9 @@ export default class ConceptsPlugin extends Plugin {
     const current = this.app.vault.getAbstractFileByPath(file.path);
     if (!(current instanceof TFile)) return;
     const source = await this.app.vault.cachedRead(current);
-    const parsed = parseCallouts(source);
-    // #region agent log
-    try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "E", location: "src/main.ts:reconcileFile", message: "Reconciling selected modified file", data: { calloutCount: parsed.length, registeredBlockIds: parsed.flatMap((callout) => callout.blockId && this.store.byBlockId(callout.blockId) ? [callout.blockId] : []) }, timestamp: Date.now() })}\n`); } catch {}
-    // #endregion
     let moved = 0;
     let linksUpdated = 0;
-    for (const callout of parsed) {
+    for (const callout of parseCallouts(source)) {
       if (callout.blockId && this.store.byBlockId(callout.blockId)) {
         const result = await this.store.updateSourcePath(callout.blockId, current.path);
         if (result.moved) moved++;
