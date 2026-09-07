@@ -2,10 +2,16 @@ import type { CalloutLocation } from "./types";
 
 const HEADER = /^(\s*)>\s*\[!([^\]]+)\][+-]?\s*(.*)$/;
 const BLOCK_ID = /^\s*\^([A-Za-z0-9-]+)\s*$/;
+const QUOTED_BLOCK_ID = /^\s*>\s*\^([A-Za-z0-9-]+)\s*$/;
+const TRAILING_BLOCK_ID = /\s\^([A-Za-z0-9-]+)\s*$/;
 
 /**
  * Finds top-level and indented callouts while preserving source line numbers.
- * A structured block ID belongs on its own line after the block.
+ *
+ * A block ID may sit on its own line after the callout, on a quoted line
+ * inside it, or at the end of its last quoted line. Obsidian produces all
+ * three, and a moved callout keeps whichever form the note already used, so
+ * every form has to resolve to the same identity.
  */
 export function parseCallouts(source: string): CalloutLocation[] {
   const lines = source.split("\n");
@@ -24,7 +30,21 @@ export function parseCallouts(source: string): CalloutLocation[] {
 
     let blockId: string | undefined;
     let blockIdLine: number | undefined;
-    for (let candidate = endLine + 1; candidate <= Math.min(endLine + 2, lines.length - 1); candidate++) {
+    for (let candidate = endLine; candidate >= index; candidate--) {
+      const quoted = lines[candidate].match(QUOTED_BLOCK_ID);
+      const trailing = lines[candidate].match(TRAILING_BLOCK_ID);
+      const match = quoted ?? (isBlockIdLike(trailing?.[1]) ? trailing : null);
+      if (match) {
+        blockId = match[1];
+        blockIdLine = candidate;
+        break;
+      }
+    }
+    for (
+      let candidate = endLine + 1;
+      blockId === undefined && candidate <= Math.min(endLine + 2, lines.length - 1);
+      candidate++
+    ) {
       const match = lines[candidate].match(BLOCK_ID);
       if (match) {
         blockId = match[1];
@@ -98,6 +118,14 @@ export function createBlockId(existingIds: Set<string>): string {
     const candidate = `concept-${random}`;
     if (!existingIds.has(candidate)) return candidate;
   } while (true);
+}
+
+/**
+ * A trailing `^token` is only treated as a block ID when it cannot plausibly
+ * be exponent notation such as `x ^n`, so math content keeps its meaning.
+ */
+function isBlockIdLike(value: string | undefined): value is string {
+  return value !== undefined && (value.includes("-") || value.length >= 6);
 }
 
 function cleanTitle(value: string): string {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { parseCallouts, resolveSubmittedCallout } from "../src/callouts";
 import { ConceptStore } from "../src/concept-store";
 import { DEFAULT_SETTINGS } from "../src/settings";
 import { TFile, TFolder, normalizePath, parseYaml, stringifyYaml } from "./obsidian-mock";
@@ -161,6 +162,36 @@ describe("ConceptStore link updates when a callout moves", () => {
     expect(record).toContain('name: "Complete normed space"');
     expect(record).toContain('callout_type: "theorem"');
     expect(record).toContain('source_path: "Analysis/Moved.md"');
+    expect(vault.files.get("Notes/Uses.md")).toContain(
+      "[[Analysis/Moved#^concept-a1b2c3d4e5f6|Banach space]]"
+    );
+  });
+
+  // Mirrors clicking the callout button: the note is parsed, the concept is
+  // looked up by the block ID found there, and the submitted form updates it.
+  it.each([
+    ["a quoted line inside the callout", "> [!definition] Banach space\n> Content.\n> ^concept-a1b2c3d4e5f6"],
+    ["the callout's last quoted line", "> [!definition] Banach space\n> Content. ^concept-a1b2c3d4e5f6"],
+    ["its own line after the callout", "> [!definition] Banach space\n> Content.\n\n^concept-a1b2c3d4e5f6"]
+  ])("recognizes and updates a moved concept whose block ID is on %s", async (_form, callout) => {
+    vault.files.set("Analysis/Moved.md", `# Moved\n\n${callout}\n`);
+    const location = parseCallouts(vault.files.get("Analysis/Moved.md") ?? "")[0];
+
+    const existing = store.byBlockId(location.blockId ?? "");
+    expect(existing).toBeDefined();
+
+    const submitted = resolveSubmittedCallout([location], location, existing?.blockId);
+    expect(submitted).toBeDefined();
+
+    const result = await store.updateConcept(BLOCK, {
+      name: existing?.name ?? "",
+      aliases: existing?.aliases ?? [],
+      sourcePath: "Analysis/Moved.md",
+      calloutType: submitted?.type ?? ""
+    });
+
+    expect(result.moved).toBe(true);
+    expect(result.linksUpdated).toBe(4);
     expect(vault.files.get("Notes/Uses.md")).toContain(
       "[[Analysis/Moved#^concept-a1b2c3d4e5f6|Banach space]]"
     );

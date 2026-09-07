@@ -52,6 +52,43 @@ describe("parseCallouts", () => {
       .toBe("Topological Space");
   });
 
+  it("reads a block ID written on a quoted line inside the callout", () => {
+    const callout = parseCallouts(
+      "> [!definition] Banach Space\n> A complete normed vector space.\n> ^concept-5144b7350d14"
+    )[0];
+    expect(callout.blockId).toBe("concept-5144b7350d14");
+  });
+
+  it("reads a block ID appended to the callout's last quoted line", () => {
+    const callout = parseCallouts(
+      "> [!definition] Banach Space\n> A complete normed vector space. ^concept-5144b7350d14"
+    )[0];
+    expect(callout.blockId).toBe("concept-5144b7350d14");
+  });
+
+  it("reads a block ID inside a callout that is followed by other content", () => {
+    const callout = parseCallouts(
+      "> [!definition] Banach Space\n> Content.\n> ^concept-5144b7350d14\n\nMore text."
+    )[0];
+    expect(callout.blockId).toBe("concept-5144b7350d14");
+  });
+
+  it("keeps exponent notation from being read as a block ID", () => {
+    const callout = parseCallouts("> [!theorem] Growth\n> The bound is x ^n")[0];
+    expect(callout.blockId).toBeUndefined();
+  });
+
+  it("prefers the callout's own block ID over the next block's ID", () => {
+    const callout = parseCallouts([
+      "> [!definition] Banach Space",
+      "> Content.",
+      "> ^concept-inside",
+      "",
+      "^concept-nextblock"
+    ].join("\n"))[0];
+    expect(callout.blockId).toBe("concept-inside");
+  });
+
   it("resolves a moved registered callout by its stable block ID", () => {
     const initial = parseCallouts(
       "> [!definition] Original title\n> Content\n\n^concept-stable"
