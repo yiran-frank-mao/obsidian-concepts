@@ -140,4 +140,44 @@ describe("ConceptStore link updates when a callout moves", () => {
     const record = vault.files.get("Concepts/Database/Banach space.md") ?? "";
     expect(record).toContain('target: "[[Analysis/Moved#^concept-a1b2c3d4e5f6]]"');
   });
+
+  it("updates a moved registered concept's metadata and every vault reference", async () => {
+    const result = await store.updateConcept(BLOCK, {
+      name: "Complete normed space",
+      aliases: ["Banach space", "Banach spaces"],
+      sourcePath: "Analysis/Moved.md",
+      calloutType: "theorem"
+    });
+
+    const record = vault.files.get("Concepts/Database/Banach space.md") ?? "";
+    expect(result).toMatchObject({ moved: true, linksUpdated: 4 });
+    expect(result.concept).toMatchObject({
+      name: "Complete normed space",
+      aliases: ["Banach space", "Banach spaces"],
+      sourcePath: "Analysis/Moved.md",
+      blockId: BLOCK,
+      calloutType: "theorem"
+    });
+    expect(record).toContain('name: "Complete normed space"');
+    expect(record).toContain('callout_type: "theorem"');
+    expect(record).toContain('source_path: "Analysis/Moved.md"');
+    expect(vault.files.get("Notes/Uses.md")).toContain(
+      "[[Analysis/Moved#^concept-a1b2c3d4e5f6|Banach space]]"
+    );
+  });
+
+  it("keeps create idempotent while moving an already registered block", async () => {
+    const concept = await store.create(
+      "Banach space",
+      ["Banach spaces"],
+      "Analysis/Moved.md",
+      BLOCK,
+      "definition"
+    );
+
+    expect(concept.blockId).toBe(BLOCK);
+    expect(vault.files.get("Notes/Uses.md")).toContain(
+      "[[Analysis/Moved#^concept-a1b2c3d4e5f6|Banach space]]"
+    );
+  });
 });

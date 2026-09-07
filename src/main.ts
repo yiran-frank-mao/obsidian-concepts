@@ -8,7 +8,13 @@ import {
   setIcon,
   TFile
 } from "obsidian";
-import { calloutsInRange, createBlockId, insertBlockId, parseCallouts } from "./callouts";
+import {
+  calloutsInRange,
+  createBlockId,
+  insertBlockId,
+  parseCallouts,
+  resolveSubmittedCallout
+} from "./callouts";
 import { ConceptStore } from "./concept-store";
 import { formatLinkUpdateNotice } from "./links";
 import { ConceptChooserModal, ConceptFormModal } from "./modals";
@@ -153,7 +159,7 @@ export default class ConceptsPlugin extends Plugin {
         cls: "concepts-add-button",
         attr: {
           "aria-label": location.blockId && this.store.byBlockId(location.blockId)
-            ? "Concept already registered"
+            ? "Update this concept"
             : "Add this callout as a concept",
           type: "button"
         }
@@ -165,11 +171,7 @@ export default class ConceptsPlugin extends Plugin {
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (registered) {
-          new Notice(`“${location.title}” is already a concept.`);
-        } else {
-          void this.openConceptForm(file, location);
-        }
+        void this.openConceptForm(file, location);
       });
     });
   }
@@ -196,20 +198,29 @@ export default class ConceptsPlugin extends Plugin {
     initialLocation: CalloutLocation
   ): Promise<void> {
     if (!file) return;
-    new ConceptFormModal(this.app, initialLocation.title, async ({ name, aliases }) => {
+    const existing = initialLocation.blockId
+      ? this.store.byBlockId(initialLocation.blockId)
+      : undefined;
+    new ConceptFormModal(this.app, existing?.name ?? initialLocation.title, async ({ name, aliases }) => {
       const source = await this.app.vault.read(file);
       const callouts = parseCallouts(source);
-      const location = callouts.find(
-        (candidate) =>
-          candidate.startLine === initialLocation.startLine &&
-          candidate.title === initialLocation.title
-      ) ?? callouts.find(
-        (candidate) =>
-          candidate.title === initialLocation.title &&
-          candidate.type.toLocaleLowerCase() === initialLocation.type.toLocaleLowerCase()
-      );
+      const location = resolveSubmittedCallout(callouts, initialLocation, existing?.blockId);
       if (!location) {
         new Notice("Concepts could not find that callout. It may have moved or changed.");
+        return;
+      }
+
+      if (existing) {
+        const result = await this.store.updateConcept(existing.blockId, {
+          name,
+          aliases,
+          sourcePath: file.path,
+          calloutType: location.type
+        });
+        const linkNotice = result.moved && this.settings.updateVaultLinks
+          ? ` ${formatLinkUpdateNotice(result.linksUpdated)}`
+          : "";
+        new Notice(`Updated concept “${name}”.${linkNotice}`);
         return;
       }
 
@@ -224,6 +235,9 @@ export default class ConceptsPlugin extends Plugin {
       }
       await this.store.create(name, aliases, file.path, blockId, location.type);
       new Notice(`Added concept “${name}”.`);
+    }, {
+      aliases: existing?.aliases,
+      mode: existing ? "update" : "add"
     }).open();
   }
 

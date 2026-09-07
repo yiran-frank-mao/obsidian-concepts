@@ -6,21 +6,29 @@ export interface ConceptFormResult {
   aliases: string[];
 }
 
+export interface ConceptFormOptions {
+  aliases?: string[];
+  mode?: "add" | "update";
+}
+
 export class ConceptFormModal extends Modal {
   private name: string;
-  private aliases = "";
+  private aliases: string;
 
   constructor(
     app: App,
     initialName: string,
-    private readonly onSubmit: (result: ConceptFormResult) => Promise<void>
+    private readonly onSubmit: (result: ConceptFormResult) => Promise<void>,
+    private readonly options: ConceptFormOptions = {}
   ) {
     super(app);
     this.name = initialName;
+    this.aliases = options.aliases?.join(", ") ?? "";
   }
 
   onOpen(): void {
-    this.setTitle("Add concept");
+    const updating = this.options.mode === "update";
+    this.setTitle(updating ? "Update concept" : "Add concept");
     new Setting(this.contentEl)
       .setName("Name")
       .setDesc("The canonical name of this concept.")
@@ -33,12 +41,13 @@ export class ConceptFormModal extends Modal {
       .setDesc("Comma-separated alternative names, such as “Topology, Topological spaces”.")
       .addText((text) => {
         text.setPlaceholder("Alias one, Alias two")
+          .setValue(this.aliases)
           .onChange((value) => (this.aliases = value));
       });
     new Setting(this.contentEl)
       .addButton((button) =>
         button
-          .setButtonText("Add concept")
+          .setButtonText(updating ? "Update concept" : "Add concept")
           .setCta()
           .onClick(() => void this.submit())
       );

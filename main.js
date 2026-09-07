@@ -68,6 +68,17 @@ function calloutsInRange(source, lineStart, lineEnd) {
     (callout) => callout.startLine >= lineStart && callout.startLine <= lineEnd
   );
 }
+function resolveSubmittedCallout(callouts, initialLocation, stableBlockId) {
+  var _a;
+  if (stableBlockId) {
+    return callouts.find((candidate) => candidate.blockId === stableBlockId);
+  }
+  return (_a = callouts.find(
+    (candidate) => candidate.startLine === initialLocation.startLine && candidate.title === initialLocation.title
+  )) != null ? _a : callouts.find(
+    (candidate) => candidate.title === initialLocation.title && candidate.type.toLocaleLowerCase() === initialLocation.type.toLocaleLowerCase()
+  );
+}
 function insertBlockId(source, callout, blockId) {
   if (callout.blockId) return source;
   const lines = source.split("\n");
@@ -167,8 +178,12 @@ var ConceptStore = class {
   async create(name, aliases, sourcePath, blockId, calloutType) {
     const existing = this.byBlockId(blockId);
     if (existing) {
-      await this.updateMetadata(existing, { name, aliases, sourcePath, calloutType });
-      return existing;
+      return (await this.updateConcept(blockId, {
+        name,
+        aliases,
+        sourcePath,
+        calloutType
+      })).concept;
     }
     const now = (/* @__PURE__ */ new Date()).toISOString();
     const id = this.uuid();
@@ -187,6 +202,16 @@ var ConceptStore = class {
     await this.app.vault.create(recordPath, this.serialize(concept));
     this.concepts.set(blockId, concept);
     return concept;
+  }
+  async updateConcept(blockId, updates) {
+    const concept = this.byBlockId(blockId);
+    if (!concept) {
+      throw new Error(`Concept with block ID "${blockId}" was not found.`);
+    }
+    const moved = concept.sourcePath !== updates.sourcePath;
+    await this.updateMetadata(concept, updates);
+    const linksUpdated = moved && this.settings.updateVaultLinks ? await this.updateVaultLinks(blockId, updates.sourcePath) : 0;
+    return { concept, moved, linksUpdated };
   }
   async updateMetadata(concept, updates) {
     const file = this.app.vault.getAbstractFileByPath(concept.recordPath);
@@ -208,9 +233,13 @@ var ConceptStore = class {
     if (!concept || concept.sourcePath === sourcePath) {
       return { moved: false, linksUpdated: 0 };
     }
-    await this.updateMetadata(concept, { sourcePath });
-    const linksUpdated = this.settings.updateVaultLinks ? await this.updateVaultLinks(blockId, sourcePath) : 0;
-    return { moved: true, linksUpdated };
+    const result = await this.updateConcept(blockId, {
+      name: concept.name,
+      aliases: concept.aliases,
+      sourcePath,
+      calloutType: concept.calloutType
+    });
+    return { moved: result.moved, linksUpdated: result.linksUpdated };
   }
   /**
    * Rewrites every wikilink in the vault that references `blockId` so its
@@ -391,24 +420,28 @@ function uniqueAliases(aliases, name) {
 // src/modals.ts
 var import_obsidian2 = require("obsidian");
 var ConceptFormModal = class extends import_obsidian2.Modal {
-  constructor(app, initialName, onSubmit) {
+  constructor(app, initialName, onSubmit, options = {}) {
+    var _a, _b;
     super(app);
     __publicField(this, "onSubmit", onSubmit);
+    __publicField(this, "options", options);
     __publicField(this, "name");
-    __publicField(this, "aliases", "");
+    __publicField(this, "aliases");
     this.name = initialName;
+    this.aliases = (_b = (_a = options.aliases) == null ? void 0 : _a.join(", ")) != null ? _b : "";
   }
   onOpen() {
-    this.setTitle("Add concept");
+    const updating = this.options.mode === "update";
+    this.setTitle(updating ? "Update concept" : "Add concept");
     new import_obsidian2.Setting(this.contentEl).setName("Name").setDesc("The canonical name of this concept.").addText((text) => {
       text.setValue(this.name).onChange((value) => this.name = value);
       window.setTimeout(() => text.inputEl.select(), 0);
     });
     new import_obsidian2.Setting(this.contentEl).setName("Aliases").setDesc("Comma-separated alternative names, such as \u201CTopology, Topological spaces\u201D.").addText((text) => {
-      text.setPlaceholder("Alias one, Alias two").onChange((value) => this.aliases = value);
+      text.setPlaceholder("Alias one, Alias two").setValue(this.aliases).onChange((value) => this.aliases = value);
     });
     new import_obsidian2.Setting(this.contentEl).addButton(
-      (button) => button.setButtonText("Add concept").setCta().onClick(() => void this.submit())
+      (button) => button.setButtonText(updating ? "Update concept" : "Add concept").setCta().onClick(() => void this.submit())
     );
   }
   onClose() {
@@ -618,7 +651,7 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
       const button = calloutElement.createEl("button", {
         cls: "concepts-add-button",
         attr: {
-          "aria-label": location.blockId && this.store.byBlockId(location.blockId) ? "Concept already registered" : "Add this callout as a concept",
+          "aria-label": location.blockId && this.store.byBlockId(location.blockId) ? "Update this concept" : "Add this callout as a concept",
           type: "button"
         }
       });
@@ -629,11 +662,7 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (registered) {
-          new import_obsidian4.Notice(`\u201C${location.title}\u201D is already a concept.`);
-        } else {
-          void this.openConceptForm(file, location);
-        }
+        void this.openConceptForm(file, location);
       });
     });
   }
@@ -649,21 +678,30 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     return (_d = matching[0]) != null ? _d : candidates[fallbackIndex];
   }
   async openConceptForm(file, initialLocation) {
+    var _a;
     if (!file) return;
-    new ConceptFormModal(this.app, initialLocation.title, async ({ name, aliases }) => {
-      var _a, _b;
+    const existing = initialLocation.blockId ? this.store.byBlockId(initialLocation.blockId) : void 0;
+    new ConceptFormModal(this.app, (_a = existing == null ? void 0 : existing.name) != null ? _a : initialLocation.title, async ({ name, aliases }) => {
+      var _a2;
       const source = await this.app.vault.read(file);
       const callouts = parseCallouts(source);
-      const location = (_a = callouts.find(
-        (candidate) => candidate.startLine === initialLocation.startLine && candidate.title === initialLocation.title
-      )) != null ? _a : callouts.find(
-        (candidate) => candidate.title === initialLocation.title && candidate.type.toLocaleLowerCase() === initialLocation.type.toLocaleLowerCase()
-      );
+      const location = resolveSubmittedCallout(callouts, initialLocation, existing == null ? void 0 : existing.blockId);
       if (!location) {
         new import_obsidian4.Notice("Concepts could not find that callout. It may have moved or changed.");
         return;
       }
-      const blockId = (_b = location.blockId) != null ? _b : createBlockId(
+      if (existing) {
+        const result = await this.store.updateConcept(existing.blockId, {
+          name,
+          aliases,
+          sourcePath: file.path,
+          calloutType: location.type
+        });
+        const linkNotice = result.moved && this.settings.updateVaultLinks ? ` ${formatLinkUpdateNotice(result.linksUpdated)}` : "";
+        new import_obsidian4.Notice(`Updated concept \u201C${name}\u201D.${linkNotice}`);
+        return;
+      }
+      const blockId = (_a2 = location.blockId) != null ? _a2 : createBlockId(
         /* @__PURE__ */ new Set([
           ...this.store.existingBlockIds(),
           ...callouts.flatMap((callout) => callout.blockId ? [callout.blockId] : [])
@@ -674,6 +712,9 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
       }
       await this.store.create(name, aliases, file.path, blockId, location.type);
       new import_obsidian4.Notice(`Added concept \u201C${name}\u201D.`);
+    }, {
+      aliases: existing == null ? void 0 : existing.aliases,
+      mode: existing ? "update" : "add"
     }).open();
   }
   linkConcept(editor) {

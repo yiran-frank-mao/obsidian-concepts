@@ -1,6 +1,6 @@
 {
   "name": "obsidian-concepts",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "description": "Manage and link concepts stored in Obsidian callouts",
   "main": "main.js",
   "scripts": {

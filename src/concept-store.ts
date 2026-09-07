@@ -14,6 +14,10 @@ export interface SourcePathUpdate {
   linksUpdated: number;
 }
 
+export interface ConceptUpdate extends SourcePathUpdate {
+  concept: Concept;
+}
+
 export interface ReconcileResult {
   moved: number;
   linksUpdated: number;
@@ -87,8 +91,12 @@ export class ConceptStore {
   ): Promise<Concept> {
     const existing = this.byBlockId(blockId);
     if (existing) {
-      await this.updateMetadata(existing, { name, aliases, sourcePath, calloutType });
-      return existing;
+      return (await this.updateConcept(blockId, {
+        name,
+        aliases,
+        sourcePath,
+        calloutType
+      })).concept;
     }
 
     const now = new Date().toISOString();
@@ -108,6 +116,23 @@ export class ConceptStore {
     await this.app.vault.create(recordPath, this.serialize(concept));
     this.concepts.set(blockId, concept);
     return concept;
+  }
+
+  async updateConcept(
+    blockId: string,
+    updates: Pick<Concept, "name" | "aliases" | "sourcePath" | "calloutType">
+  ): Promise<ConceptUpdate> {
+    const concept = this.byBlockId(blockId);
+    if (!concept) {
+      throw new Error(`Concept with block ID "${blockId}" was not found.`);
+    }
+
+    const moved = concept.sourcePath !== updates.sourcePath;
+    await this.updateMetadata(concept, updates);
+    const linksUpdated = moved && this.settings.updateVaultLinks
+      ? await this.updateVaultLinks(blockId, updates.sourcePath)
+      : 0;
+    return { concept, moved, linksUpdated };
   }
 
   async updateMetadata(
@@ -135,11 +160,13 @@ export class ConceptStore {
     if (!concept || concept.sourcePath === sourcePath) {
       return { moved: false, linksUpdated: 0 };
     }
-    await this.updateMetadata(concept, { sourcePath });
-    const linksUpdated = this.settings.updateVaultLinks
-      ? await this.updateVaultLinks(blockId, sourcePath)
-      : 0;
-    return { moved: true, linksUpdated };
+    const result = await this.updateConcept(blockId, {
+      name: concept.name,
+      aliases: concept.aliases,
+      sourcePath,
+      calloutType: concept.calloutType
+    });
+    return { moved: result.moved, linksUpdated: result.linksUpdated };
   }
 
   /**
