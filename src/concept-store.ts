@@ -7,6 +7,17 @@ import {
 } from "obsidian";
 import type { Concept, ConceptsSettings } from "./types";
 import { parseCallouts } from "./callouts";
+import { rewriteBlockLinks } from "./links";
+
+export interface SourcePathUpdate {
+  moved: boolean;
+  linksUpdated: number;
+}
+
+export interface ReconcileResult {
+  moved: number;
+  linksUpdated: number;
+}
 
 type ConceptFrontmatter = {
   concept_record?: boolean;
@@ -119,16 +130,46 @@ export class ConceptStore {
     });
   }
 
-  async updateSourcePath(blockId: string, sourcePath: string): Promise<boolean> {
+  async updateSourcePath(blockId: string, sourcePath: string): Promise<SourcePathUpdate> {
     const concept = this.byBlockId(blockId);
-    if (!concept || concept.sourcePath === sourcePath) return false;
+    if (!concept || concept.sourcePath === sourcePath) {
+      return { moved: false, linksUpdated: 0 };
+    }
     await this.updateMetadata(concept, { sourcePath });
-    return true;
+    const linksUpdated = this.settings.updateVaultLinks
+      ? await this.updateVaultLinks(blockId, sourcePath)
+      : 0;
+    return { moved: true, linksUpdated };
   }
 
-  async reconcileLocations(): Promise<number> {
+  /**
+   * Rewrites every wikilink in the vault that references `blockId` so its
+   * note-path points at the block's new location. Returns the number of links
+   * that changed. Record files are included so a concept's own definition link
+   * follows the callout as well.
+   */
+  async updateVaultLinks(blockId: string, newSourcePath: string): Promise<number> {
+    const newTarget = this.notePathOf(newSourcePath);
+    let linksUpdated = 0;
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const source = await this.app.vault.read(file);
+      const { content, changed } = rewriteBlockLinks(
+        source,
+        blockId,
+        newTarget,
+        this.notePathOf(file.path)
+      );
+      if (changed > 0 && content !== source) {
+        await this.app.vault.modify(file, content);
+        linksUpdated += changed;
+      }
+    }
+    return linksUpdated;
+  }
+
+  async reconcileLocations(): Promise<ReconcileResult> {
     const wanted = this.existingBlockIds();
-    if (wanted.size === 0) return 0;
+    if (wanted.size === 0) return { moved: 0, linksUpdated: 0 };
 
     const locations = new Map<string, string>();
     for (const file of this.app.vault.getMarkdownFiles()) {
@@ -141,11 +182,14 @@ export class ConceptStore {
       }
     }
 
-    let changed = 0;
+    let moved = 0;
+    let linksUpdated = 0;
     for (const [blockId, sourcePath] of locations) {
-      if (await this.updateSourcePath(blockId, sourcePath)) changed++;
+      const result = await this.updateSourcePath(blockId, sourcePath);
+      if (result.moved) moved++;
+      linksUpdated += result.linksUpdated;
     }
-    return changed;
+    return { moved, linksUpdated };
   }
 
   async handleRename(file: TFile, oldPath: string): Promise<void> {
@@ -157,8 +201,11 @@ export class ConceptStore {
   }
 
   targetLink(concept: Pick<Concept, "sourcePath" | "blockId">): string {
-    const notePath = concept.sourcePath.replace(/\.md$/i, "");
-    return `[[${notePath}#^${concept.blockId}]]`;
+    return `[[${this.notePathOf(concept.sourcePath)}#^${concept.blockId}]]`;
+  }
+
+  private notePathOf(path: string): string {
+    return path.replace(/\.md$/i, "");
   }
 
   private async ensureBase(): Promise<void> {
