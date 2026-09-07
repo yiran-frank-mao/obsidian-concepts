@@ -46,7 +46,7 @@ The paths can be changed in **Settings → Concepts**. Change them before regist
 
 When moving a callout, include the blank line and `^concept-...` line beneath it. The stable ID lets Concepts discover the new note, rewrite the database target, and update every link to that concept throughout the vault so none of them break. **Concepts: Rebuild concept locations** performs a full manual rescan if files were changed outside Obsidian.
 
-Vault-wide link updates are controlled by **Update links across the vault** in **Settings → Concepts** (on by default). Each link's note path is rewritten to the callout's new location while the visible text is preserved, so `[[Analysis#^concept-a1b2c3d4e5f6|Banach space]]` becomes `[[Functional Analysis#^concept-a1b2c3d4e5f6|Banach space]]`. Embeds (`![[…]]`) are updated too.
+Vault-wide link updates are controlled by **Update links across the vault** in **Settings → Concepts** (on by default). Each link's note path is rewritten to the callout's new location while the visible text is preserved, so `[[Analysis#^concept-a1b2c3d4e5f6|Banach space]]` becomes `[[Functional Analysis#^concept-a1b2c3d4e5f6|Banach space]]`. Embeds (`![[…]]`) are updated too. After the vault scan finishes, Concepts displays a notice with the number of links updated.
 
 ## Install with BRAT
 

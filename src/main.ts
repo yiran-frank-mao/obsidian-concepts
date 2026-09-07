@@ -10,6 +10,7 @@ import {
 } from "obsidian";
 import { calloutsInRange, createBlockId, insertBlockId, parseCallouts } from "./callouts";
 import { ConceptStore } from "./concept-store";
+import { formatLinkUpdateNotice } from "./links";
 import { ConceptChooserModal, ConceptFormModal } from "./modals";
 import { ConceptsSettingTab, DEFAULT_SETTINGS } from "./settings";
 import type { CalloutLocation, Concept, ConceptsSettings } from "./types";
@@ -323,15 +324,17 @@ export default class ConceptsPlugin extends Plugin {
     const current = this.app.vault.getAbstractFileByPath(file.path);
     if (!(current instanceof TFile)) return;
     const source = await this.app.vault.cachedRead(current);
+    let moved = 0;
     let linksUpdated = 0;
     for (const callout of parseCallouts(source)) {
       if (callout.blockId && this.store.byBlockId(callout.blockId)) {
         const result = await this.store.updateSourcePath(callout.blockId, current.path);
+        if (result.moved) moved++;
         linksUpdated += result.linksUpdated;
       }
     }
-    if (linksUpdated > 0) {
-      new Notice(`Concepts: updated ${linksUpdated} link${linksUpdated === 1 ? "" : "s"}.`);
+    if (moved > 0 && this.settings.updateVaultLinks) {
+      new Notice(formatLinkUpdateNotice(linksUpdated));
     }
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rewriteBlockLinks } from "../src/links";
+import { formatLinkUpdateNotice, rewriteBlockLinks } from "../src/links";
 
 const BLOCK = "concept-a1b2c3d4e5f6";
 
@@ -77,5 +77,15 @@ describe("rewriteBlockLinks", () => {
     const { content, changed } = rewriteBlockLinks(source, BLOCK, "New Note");
     expect(content).toBe(source);
     expect(changed).toBe(0);
+  });
+});
+
+describe("formatLinkUpdateNotice", () => {
+  it.each([
+    [0, "Concepts finished updating links: 0 links updated."],
+    [1, "Concepts finished updating links: 1 link updated."],
+    [3, "Concepts finished updating links: 3 links updated."]
+  ])("reports completion after updating %i links", (count, expected) => {
+    expect(formatLinkUpdateNotice(count)).toBe(expected);
   });
 });

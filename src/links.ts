@@ -3,6 +3,12 @@ export interface BlockLinkRewrite {
   changed: number;
 }
 
+export function formatLinkUpdateNotice(linksUpdated: number): string {
+  return `Concepts finished updating links: ${linksUpdated} link${
+    linksUpdated === 1 ? "" : "s"
+  } updated.`;
+}
+
 /**
  * Rewrites the note-path portion of every wikilink (or embed) that targets
  * `#^blockId` so it points at `newTarget`, a vault-relative path without the
