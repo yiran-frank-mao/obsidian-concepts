@@ -99,6 +99,9 @@ function escapeRegExp(value) {
 var import_obsidian = require("obsidian");
 
 // src/links.ts
+function formatLinkUpdateNotice(linksUpdated) {
+  return `Concepts finished updating links: ${linksUpdated} link${linksUpdated === 1 ? "" : "s"} updated.`;
+}
 function rewriteBlockLinks(source, blockId, newTarget, currentTarget) {
   const pattern = new RegExp(
     `\\[\\[([^\\[\\]]*?)#\\^${escapeRegExp2(blockId)}(?![0-9A-Za-z-])(\\|[^\\[\\]]*?)?\\]\\]`,
@@ -758,15 +761,17 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     const current = this.app.vault.getAbstractFileByPath(file.path);
     if (!(current instanceof import_obsidian4.TFile)) return;
     const source = await this.app.vault.cachedRead(current);
+    let moved = 0;
     let linksUpdated = 0;
     for (const callout of parseCallouts(source)) {
       if (callout.blockId && this.store.byBlockId(callout.blockId)) {
         const result = await this.store.updateSourcePath(callout.blockId, current.path);
+        if (result.moved) moved++;
         linksUpdated += result.linksUpdated;
       }
     }
-    if (linksUpdated > 0) {
-      new import_obsidian4.Notice(`Concepts: updated ${linksUpdated} link${linksUpdated === 1 ? "" : "s"}.`);
+    if (moved > 0 && this.settings.updateVaultLinks) {
+      new import_obsidian4.Notice(formatLinkUpdateNotice(linksUpdated));
     }
   }
   async reconcileAll(showNotice) {
