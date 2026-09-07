@@ -68,6 +68,17 @@ function calloutsInRange(source, lineStart, lineEnd) {
     (callout) => callout.startLine >= lineStart && callout.startLine <= lineEnd
   );
 }
+function resolveSubmittedCallout(callouts, initialLocation, stableBlockId) {
+  var _a;
+  if (stableBlockId) {
+    return callouts.find((candidate) => candidate.blockId === stableBlockId);
+  }
+  return (_a = callouts.find(
+    (candidate) => candidate.startLine === initialLocation.startLine && candidate.title === initialLocation.title
+  )) != null ? _a : callouts.find(
+    (candidate) => candidate.title === initialLocation.title && candidate.type.toLocaleLowerCase() === initialLocation.type.toLocaleLowerCase()
+  );
+}
 function insertBlockId(source, callout, blockId) {
   if (callout.blockId) return source;
   const lines = source.split("\n");
@@ -167,13 +178,12 @@ var ConceptStore = class {
   async create(name, aliases, sourcePath, blockId, calloutType) {
     const existing = this.byBlockId(blockId);
     if (existing) {
-      try {
-        require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "D", location: "src/concept-store.ts:create", message: "Existing block ID entered create update branch", data: { blockId, sourcePathChanged: existing.sourcePath !== sourcePath, updateVaultLinksEnabled: this.settings.updateVaultLinks }, timestamp: Date.now() })}
-`);
-      } catch (e) {
-      }
-      await this.updateMetadata(existing, { name, aliases, sourcePath, calloutType });
-      return existing;
+      return (await this.updateConcept(blockId, {
+        name,
+        aliases,
+        sourcePath,
+        calloutType
+      })).concept;
     }
     const now = (/* @__PURE__ */ new Date()).toISOString();
     const id = this.uuid();
@@ -193,6 +203,16 @@ var ConceptStore = class {
     this.concepts.set(blockId, concept);
     return concept;
   }
+  async updateConcept(blockId, updates) {
+    const concept = this.byBlockId(blockId);
+    if (!concept) {
+      throw new Error(`Concept with block ID "${blockId}" was not found.`);
+    }
+    const moved = concept.sourcePath !== updates.sourcePath;
+    await this.updateMetadata(concept, updates);
+    const linksUpdated = moved && this.settings.updateVaultLinks ? await this.updateVaultLinks(blockId, updates.sourcePath) : 0;
+    return { concept, moved, linksUpdated };
+  }
   async updateMetadata(concept, updates) {
     const file = this.app.vault.getAbstractFileByPath(concept.recordPath);
     if (!(file instanceof import_obsidian.TFile)) return;
@@ -210,17 +230,16 @@ var ConceptStore = class {
   }
   async updateSourcePath(blockId, sourcePath) {
     const concept = this.byBlockId(blockId);
-    try {
-      require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "D-E", location: "src/concept-store.ts:updateSourcePath", message: "Evaluated source path update", data: { blockId, conceptFound: Boolean(concept), sourcePathChanged: Boolean(concept && concept.sourcePath !== sourcePath), updateVaultLinksEnabled: this.settings.updateVaultLinks }, timestamp: Date.now() })}
-`);
-    } catch (e) {
-    }
     if (!concept || concept.sourcePath === sourcePath) {
       return { moved: false, linksUpdated: 0 };
     }
-    await this.updateMetadata(concept, { sourcePath });
-    const linksUpdated = this.settings.updateVaultLinks ? await this.updateVaultLinks(blockId, sourcePath) : 0;
-    return { moved: true, linksUpdated };
+    const result = await this.updateConcept(blockId, {
+      name: concept.name,
+      aliases: concept.aliases,
+      sourcePath,
+      calloutType: concept.calloutType
+    });
+    return { moved: result.moved, linksUpdated: result.linksUpdated };
   }
   /**
    * Rewrites every wikilink in the vault that references `blockId` so its
@@ -401,24 +420,28 @@ function uniqueAliases(aliases, name) {
 // src/modals.ts
 var import_obsidian2 = require("obsidian");
 var ConceptFormModal = class extends import_obsidian2.Modal {
-  constructor(app, initialName, onSubmit) {
+  constructor(app, initialName, onSubmit, options = {}) {
+    var _a, _b;
     super(app);
     __publicField(this, "onSubmit", onSubmit);
+    __publicField(this, "options", options);
     __publicField(this, "name");
-    __publicField(this, "aliases", "");
+    __publicField(this, "aliases");
     this.name = initialName;
+    this.aliases = (_b = (_a = options.aliases) == null ? void 0 : _a.join(", ")) != null ? _b : "";
   }
   onOpen() {
-    this.setTitle("Add concept");
+    const updating = this.options.mode === "update";
+    this.setTitle(updating ? "Update concept" : "Add concept");
     new import_obsidian2.Setting(this.contentEl).setName("Name").setDesc("The canonical name of this concept.").addText((text) => {
       text.setValue(this.name).onChange((value) => this.name = value);
       window.setTimeout(() => text.inputEl.select(), 0);
     });
     new import_obsidian2.Setting(this.contentEl).setName("Aliases").setDesc("Comma-separated alternative names, such as \u201CTopology, Topological spaces\u201D.").addText((text) => {
-      text.setPlaceholder("Alias one, Alias two").onChange((value) => this.aliases = value);
+      text.setPlaceholder("Alias one, Alias two").setValue(this.aliases).onChange((value) => this.aliases = value);
     });
     new import_obsidian2.Setting(this.contentEl).addButton(
-      (button) => button.setButtonText("Add concept").setCta().onClick(() => void this.submit())
+      (button) => button.setButtonText(updating ? "Update concept" : "Add concept").setCta().onClick(() => void this.submit())
     );
   }
   onClose() {
@@ -622,40 +645,24 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     const section = context.getSectionInfo(element);
     const candidates = section ? calloutsInRange(source, section.lineStart, section.lineEnd) : parseCallouts(source);
     rendered.forEach((calloutElement, index) => {
-      var _a;
       if (calloutElement.querySelector(":scope > .concepts-add-button")) return;
       const location = this.matchRenderedCallout(calloutElement, candidates, index);
       if (!location) return;
       const button = calloutElement.createEl("button", {
         cls: "concepts-add-button",
         attr: {
-          "aria-label": location.blockId && this.store.byBlockId(location.blockId) ? "Concept already registered" : "Add this callout as a concept",
+          "aria-label": location.blockId && this.store.byBlockId(location.blockId) ? "Update this concept" : "Add this callout as a concept",
           type: "button"
         }
       });
       const registered = Boolean(location.blockId && this.store.byBlockId(location.blockId));
-      try {
-        require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "A-B", location: "src/main.ts:decorateCallouts", message: "Resolved callout button state", data: { blockId: (_a = location.blockId) != null ? _a : null, registered }, timestamp: Date.now() })}
-`);
-      } catch (e) {
-      }
       (0, import_obsidian4.setIcon)(button, registered ? "check" : "book-plus");
       button.toggleClass("is-registered", registered);
       button.addEventListener("mousedown", (event) => event.stopPropagation());
       button.addEventListener("click", (event) => {
-        var _a2;
         event.preventDefault();
         event.stopPropagation();
-        try {
-          require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "A", location: "src/main.ts:decorateCallouts.click", message: "Callout action clicked", data: { blockId: (_a2 = location.blockId) != null ? _a2 : null, registered, branch: registered ? "notice" : "form" }, timestamp: Date.now() })}
-`);
-        } catch (e) {
-        }
-        if (registered) {
-          new import_obsidian4.Notice(`\u201C${location.title}\u201D is already a concept.`);
-        } else {
-          void this.openConceptForm(file, location);
-        }
+        void this.openConceptForm(file, location);
       });
     });
   }
@@ -672,31 +679,29 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
   }
   async openConceptForm(file, initialLocation) {
     var _a;
-    try {
-      require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "B-C", location: "src/main.ts:openConceptForm", message: "Opening concept form", data: { hasFile: Boolean(file), blockId: (_a = initialLocation.blockId) != null ? _a : null, initiallyRegistered: Boolean(initialLocation.blockId && this.store.byBlockId(initialLocation.blockId)) }, timestamp: Date.now() })}
-`);
-    } catch (e) {
-    }
     if (!file) return;
-    new ConceptFormModal(this.app, initialLocation.title, async ({ name, aliases }) => {
-      var _a2, _b, _c, _d;
+    const existing = initialLocation.blockId ? this.store.byBlockId(initialLocation.blockId) : void 0;
+    new ConceptFormModal(this.app, (_a = existing == null ? void 0 : existing.name) != null ? _a : initialLocation.title, async ({ name, aliases }) => {
+      var _a2;
       const source = await this.app.vault.read(file);
       const callouts = parseCallouts(source);
-      const location = (_a2 = callouts.find(
-        (candidate) => candidate.startLine === initialLocation.startLine && candidate.title === initialLocation.title
-      )) != null ? _a2 : callouts.find(
-        (candidate) => candidate.title === initialLocation.title && candidate.type.toLocaleLowerCase() === initialLocation.type.toLocaleLowerCase()
-      );
-      try {
-        require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "C-D", location: "src/main.ts:openConceptForm.submit", message: "Resolved submitted callout", data: { found: Boolean(location), initialBlockId: (_b = initialLocation.blockId) != null ? _b : null, resolvedBlockId: (_c = location == null ? void 0 : location.blockId) != null ? _c : null, existingConcept: Boolean((location == null ? void 0 : location.blockId) && this.store.byBlockId(location.blockId)) }, timestamp: Date.now() })}
-`);
-      } catch (e) {
-      }
+      const location = resolveSubmittedCallout(callouts, initialLocation, existing == null ? void 0 : existing.blockId);
       if (!location) {
         new import_obsidian4.Notice("Concepts could not find that callout. It may have moved or changed.");
         return;
       }
-      const blockId = (_d = location.blockId) != null ? _d : createBlockId(
+      if (existing) {
+        const result = await this.store.updateConcept(existing.blockId, {
+          name,
+          aliases,
+          sourcePath: file.path,
+          calloutType: location.type
+        });
+        const linkNotice = result.moved && this.settings.updateVaultLinks ? ` ${formatLinkUpdateNotice(result.linksUpdated)}` : "";
+        new import_obsidian4.Notice(`Updated concept \u201C${name}\u201D.${linkNotice}`);
+        return;
+      }
+      const blockId = (_a2 = location.blockId) != null ? _a2 : createBlockId(
         /* @__PURE__ */ new Set([
           ...this.store.existingBlockIds(),
           ...callouts.flatMap((callout) => callout.blockId ? [callout.blockId] : [])
@@ -707,6 +712,9 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
       }
       await this.store.create(name, aliases, file.path, blockId, location.type);
       new import_obsidian4.Notice(`Added concept \u201C${name}\u201D.`);
+    }, {
+      aliases: existing == null ? void 0 : existing.aliases,
+      mode: existing ? "update" : "add"
     }).open();
   }
   linkConcept(editor) {
@@ -784,11 +792,6 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     );
   }
   scheduleFileReconcile(file) {
-    try {
-      require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "E", location: "src/main.ts:scheduleFileReconcile", message: "Scheduled file reconcile", data: { replacedPendingTimer: this.reconcileTimer !== void 0, pathLength: file.path.length }, timestamp: Date.now() })}
-`);
-    } catch (e) {
-    }
     if (this.reconcileTimer !== void 0) window.clearTimeout(this.reconcileTimer);
     this.reconcileTimer = window.setTimeout(() => {
       this.reconcileTimer = void 0;
@@ -799,15 +802,9 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     const current = this.app.vault.getAbstractFileByPath(file.path);
     if (!(current instanceof import_obsidian4.TFile)) return;
     const source = await this.app.vault.cachedRead(current);
-    const parsed = parseCallouts(source);
-    try {
-      require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "E", location: "src/main.ts:reconcileFile", message: "Reconciling selected modified file", data: { calloutCount: parsed.length, registeredBlockIds: parsed.flatMap((callout) => callout.blockId && this.store.byBlockId(callout.blockId) ? [callout.blockId] : []) }, timestamp: Date.now() })}
-`);
-    } catch (e) {
-    }
     let moved = 0;
     let linksUpdated = 0;
-    for (const callout of parsed) {
+    for (const callout of parseCallouts(source)) {
       if (callout.blockId && this.store.byBlockId(callout.blockId)) {
         const result = await this.store.updateSourcePath(callout.blockId, current.path);
         if (result.moved) moved++;
