@@ -29,6 +29,8 @@ var import_obsidian4 = require("obsidian");
 // src/callouts.ts
 var HEADER = /^(\s*)>\s*\[!([^\]]+)\][+-]?\s*(.*)$/;
 var BLOCK_ID = /^\s*\^([A-Za-z0-9-]+)\s*$/;
+var QUOTED_BLOCK_ID = /^\s*>\s*\^([A-Za-z0-9-]+)\s*$/;
+var TRAILING_BLOCK_ID = /\s\^([A-Za-z0-9-]+)\s*$/;
 function parseCallouts(source) {
   const lines = source.split("\n");
   const result = [];
@@ -43,7 +45,17 @@ function parseCallouts(source) {
     }
     let blockId;
     let blockIdLine;
-    for (let candidate = endLine + 1; candidate <= Math.min(endLine + 2, lines.length - 1); candidate++) {
+    for (let candidate = endLine; candidate >= index; candidate--) {
+      const quoted = lines[candidate].match(QUOTED_BLOCK_ID);
+      const trailing = lines[candidate].match(TRAILING_BLOCK_ID);
+      const match = quoted != null ? quoted : isBlockIdLike(trailing == null ? void 0 : trailing[1]) ? trailing : null;
+      if (match) {
+        blockId = match[1];
+        blockIdLine = candidate;
+        break;
+      }
+    }
+    for (let candidate = endLine + 1; blockId === void 0 && candidate <= Math.min(endLine + 2, lines.length - 1); candidate++) {
       const match = lines[candidate].match(BLOCK_ID);
       if (match) {
         blockId = match[1];
@@ -95,6 +107,9 @@ function createBlockId(existingIds) {
     const candidate = `concept-${random}`;
     if (!existingIds.has(candidate)) return candidate;
   } while (true);
+}
+function isBlockIdLike(value) {
+  return value !== void 0 && (value.includes("-") || value.length >= 6);
 }
 function cleanTitle(value) {
   return value.replace(/\s+\^[A-Za-z0-9-]+\s*$/, "").replace(/[*_~`[\]]/g, "").trim();
