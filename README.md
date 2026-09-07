@@ -9,8 +9,7 @@ Concepts is an Obsidian plugin for building a wiki-like concept index from defin
 - Give each registered callout a stable Obsidian block ID.
 - Link a selected name or alias with the **Concepts: Link concept at cursor or selection** command (`Ctrl/Cmd+Shift+K` by default).
 - Use **Link concept** from the editor context menu.
-- Automatically update the concept record when a callout and its block ID move to another note.
-- Rewrite every `[[…#^concept-…]]` link across the vault so it follows the callout to its new note.
+- Automatically update links when a callout and its block ID move to another note.
 - Browse and edit concept records through an automatically created Obsidian Base.
 
 For example, selecting `Banach space` and running the link command produces:
@@ -44,9 +43,7 @@ It then creates:
 
 The paths can be changed in **Settings → Concepts**. Change them before registering concepts; path changes take effect after reloading the plugin.
 
-When moving a callout, include the blank line and `^concept-...` line beneath it. The stable ID lets Concepts discover the new note, rewrite the database target, and update every link to that concept throughout the vault so none of them break. **Concepts: Rebuild concept locations** performs a full manual rescan if files were changed outside Obsidian.
-
-Vault-wide link updates are controlled by **Update links across the vault** in **Settings → Concepts** (on by default). Each link's note path is rewritten to the callout's new location while the visible text is preserved, so `[[Analysis#^concept-a1b2c3d4e5f6|Banach space]]` becomes `[[Functional Analysis#^concept-a1b2c3d4e5f6|Banach space]]`. Embeds (`![[…]]`) are updated too.
+When moving a callout, include the blank line and `^concept-...` line beneath it. The stable ID lets Concepts discover the new note and rewrite the database target. **Concepts: Rebuild concept locations** performs a full manual rescan if files were changed outside Obsidian.
 
 ## Install with BRAT
 

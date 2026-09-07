@@ -24,6 +24,5 @@ export interface ConceptsSettings {
   basePath: string;
   showCalloutButtons: boolean;
   trackMovedCallouts: boolean;
-  updateVaultLinks: boolean;
   caseSensitive: boolean;
 }

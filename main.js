@@ -97,31 +97,6 @@ function escapeRegExp(value) {
 
 // src/concept-store.ts
 var import_obsidian = require("obsidian");
-
-// src/links.ts
-function rewriteBlockLinks(source, blockId, newTarget, currentTarget) {
-  const pattern = new RegExp(
-    `\\[\\[([^\\[\\]]*?)#\\^${escapeRegExp2(blockId)}(?![0-9A-Za-z-])(\\|[^\\[\\]]*?)?\\]\\]`,
-    "g"
-  );
-  let changed = 0;
-  const content = source.replace(pattern, (match, path, alias) => {
-    const display = alias != null ? alias : "";
-    if (path === "") {
-      if (currentTarget === void 0 || currentTarget === newTarget) return match;
-    } else if (path === newTarget) {
-      return match;
-    }
-    changed++;
-    return `[[${newTarget}#^${blockId}${display}]]`;
-  });
-  return { content, changed };
-}
-function escapeRegExp2(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// src/concept-store.ts
 var ConceptStore = class {
   constructor(app, settings) {
     __publicField(this, "app", app);
@@ -202,40 +177,13 @@ var ConceptStore = class {
   }
   async updateSourcePath(blockId, sourcePath) {
     const concept = this.byBlockId(blockId);
-    if (!concept || concept.sourcePath === sourcePath) {
-      return { moved: false, linksUpdated: 0 };
-    }
+    if (!concept || concept.sourcePath === sourcePath) return false;
     await this.updateMetadata(concept, { sourcePath });
-    const linksUpdated = this.settings.updateVaultLinks ? await this.updateVaultLinks(blockId, sourcePath) : 0;
-    return { moved: true, linksUpdated };
-  }
-  /**
-   * Rewrites every wikilink in the vault that references `blockId` so its
-   * note-path points at the block's new location. Returns the number of links
-   * that changed. Record files are included so a concept's own definition link
-   * follows the callout as well.
-   */
-  async updateVaultLinks(blockId, newSourcePath) {
-    const newTarget = this.notePathOf(newSourcePath);
-    let linksUpdated = 0;
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const source = await this.app.vault.read(file);
-      const { content, changed } = rewriteBlockLinks(
-        source,
-        blockId,
-        newTarget,
-        this.notePathOf(file.path)
-      );
-      if (changed > 0 && content !== source) {
-        await this.app.vault.modify(file, content);
-        linksUpdated += changed;
-      }
-    }
-    return linksUpdated;
+    return true;
   }
   async reconcileLocations() {
     const wanted = this.existingBlockIds();
-    if (wanted.size === 0) return { moved: 0, linksUpdated: 0 };
+    if (wanted.size === 0) return 0;
     const locations = /* @__PURE__ */ new Map();
     for (const file of this.app.vault.getMarkdownFiles()) {
       if (file.path.startsWith(`${(0, import_obsidian.normalizePath)(this.settings.databaseFolder)}/`)) continue;
@@ -246,14 +194,11 @@ var ConceptStore = class {
         }
       }
     }
-    let moved = 0;
-    let linksUpdated = 0;
+    let changed = 0;
     for (const [blockId, sourcePath] of locations) {
-      const result = await this.updateSourcePath(blockId, sourcePath);
-      if (result.moved) moved++;
-      linksUpdated += result.linksUpdated;
+      if (await this.updateSourcePath(blockId, sourcePath)) changed++;
     }
-    return { moved, linksUpdated };
+    return changed;
   }
   async handleRename(file, oldPath) {
     for (const concept of this.all()) {
@@ -263,10 +208,8 @@ var ConceptStore = class {
     }
   }
   targetLink(concept) {
-    return `[[${this.notePathOf(concept.sourcePath)}#^${concept.blockId}]]`;
-  }
-  notePathOf(path) {
-    return path.replace(/\.md$/i, "");
+    const notePath = concept.sourcePath.replace(/\.md$/i, "");
+    return `[[${notePath}#^${concept.blockId}]]`;
   }
   async ensureBase() {
     const path = (0, import_obsidian.normalizePath)(this.settings.basePath);
@@ -454,7 +397,6 @@ var DEFAULT_SETTINGS = {
   basePath: "Concepts/Concepts.base",
   showCalloutButtons: true,
   trackMovedCallouts: true,
-  updateVaultLinks: true,
   caseSensitive: false
 };
 var ConceptsSettingTab = class extends import_obsidian3.PluginSettingTab {
@@ -485,14 +427,6 @@ var ConceptsSettingTab = class extends import_obsidian3.PluginSettingTab {
     new import_obsidian3.Setting(this.containerEl).setName("Track moved callouts").setDesc("Find known block IDs after note edits and update concept targets.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.trackMovedCallouts).onChange(async (value) => {
         this.plugin.settings.trackMovedCallouts = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian3.Setting(this.containerEl).setName("Update links across the vault").setDesc(
-      "When a registered callout moves to another note, rewrite every wikilink to that concept so it points to the new location."
-    ).addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.updateVaultLinks).onChange(async (value) => {
-        this.plugin.settings.updateVaultLinks = value;
         await this.plugin.saveSettings();
       })
     );
@@ -758,27 +692,16 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     const current = this.app.vault.getAbstractFileByPath(file.path);
     if (!(current instanceof import_obsidian4.TFile)) return;
     const source = await this.app.vault.cachedRead(current);
-    let linksUpdated = 0;
     for (const callout of parseCallouts(source)) {
       if (callout.blockId && this.store.byBlockId(callout.blockId)) {
-        const result = await this.store.updateSourcePath(callout.blockId, current.path);
-        linksUpdated += result.linksUpdated;
+        await this.store.updateSourcePath(callout.blockId, current.path);
       }
-    }
-    if (linksUpdated > 0) {
-      new import_obsidian4.Notice(`Concepts: updated ${linksUpdated} link${linksUpdated === 1 ? "" : "s"}.`);
     }
   }
   async reconcileAll(showNotice) {
-    const { moved, linksUpdated } = await this.store.reconcileLocations();
+    const changed = await this.store.reconcileLocations();
     if (showNotice) {
-      if (!moved) {
-        new import_obsidian4.Notice("All concept locations are up to date.");
-        return;
-      }
-      const locations = `${moved} concept location${moved === 1 ? "" : "s"}`;
-      const links = linksUpdated ? ` and ${linksUpdated} link${linksUpdated === 1 ? "" : "s"}` : "";
-      new import_obsidian4.Notice(`Updated ${locations}${links}.`);
+      new import_obsidian4.Notice(changed ? `Updated ${changed} concept location${changed === 1 ? "" : "s"}.` : "All concept locations are up to date.");
     }
   }
   async openBase() {

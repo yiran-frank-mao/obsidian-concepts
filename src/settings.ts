@@ -7,7 +7,6 @@ export const DEFAULT_SETTINGS: ConceptsSettings = {
   basePath: "Concepts/Concepts.base",
   showCalloutButtons: true,
   trackMovedCallouts: true,
-  updateVaultLinks: true,
   caseSensitive: false
 };
 
@@ -51,17 +50,6 @@ export class ConceptsSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.trackMovedCallouts).onChange(async (value) => {
           this.plugin.settings.trackMovedCallouts = value;
-          await this.plugin.saveSettings();
-        })
-      );
-    new Setting(this.containerEl)
-      .setName("Update links across the vault")
-      .setDesc(
-        "When a registered callout moves to another note, rewrite every wikilink to that concept so it points to the new location."
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.updateVaultLinks).onChange(async (value) => {
-          this.plugin.settings.updateVaultLinks = value;
           await this.plugin.saveSettings();
         })
       );
