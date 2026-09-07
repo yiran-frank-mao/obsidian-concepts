@@ -87,6 +87,9 @@ export class ConceptStore {
   ): Promise<Concept> {
     const existing = this.byBlockId(blockId);
     if (existing) {
+      // #region agent log
+      try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "D", location: "src/concept-store.ts:create", message: "Existing block ID entered create update branch", data: { blockId, sourcePathChanged: existing.sourcePath !== sourcePath, updateVaultLinksEnabled: this.settings.updateVaultLinks }, timestamp: Date.now() })}\n`); } catch {}
+      // #endregion
       await this.updateMetadata(existing, { name, aliases, sourcePath, calloutType });
       return existing;
     }
@@ -132,6 +135,9 @@ export class ConceptStore {
 
   async updateSourcePath(blockId: string, sourcePath: string): Promise<SourcePathUpdate> {
     const concept = this.byBlockId(blockId);
+    // #region agent log
+    try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "D-E", location: "src/concept-store.ts:updateSourcePath", message: "Evaluated source path update", data: { blockId, conceptFound: Boolean(concept), sourcePathChanged: Boolean(concept && concept.sourcePath !== sourcePath), updateVaultLinksEnabled: this.settings.updateVaultLinks }, timestamp: Date.now() })}\n`); } catch {}
+    // #endregion
     if (!concept || concept.sourcePath === sourcePath) {
       return { moved: false, linksUpdated: 0 };
     }

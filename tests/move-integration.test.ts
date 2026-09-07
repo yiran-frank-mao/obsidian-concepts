@@ -140,4 +140,20 @@ describe("ConceptStore link updates when a callout moves", () => {
     const record = vault.files.get("Concepts/Database/Banach space.md") ?? "";
     expect(record).toContain('target: "[[Analysis/Moved#^concept-a1b2c3d4e5f6]]"');
   });
+
+  it("characterizes re-adding a moved registered block through create", async () => {
+    await store.create(
+      "Banach space",
+      ["Banach spaces"],
+      "Analysis/Moved.md",
+      BLOCK,
+      "definition"
+    );
+
+    const record = vault.files.get("Concepts/Database/Banach space.md") ?? "";
+    expect(record).toContain('source_path: "Analysis/Moved.md"');
+    expect(vault.files.get("Notes/Uses.md")).toContain(
+      "[[Analysis/Original#^concept-a1b2c3d4e5f6|Banach space]]"
+    );
+  });
 });

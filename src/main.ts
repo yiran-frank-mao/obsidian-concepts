@@ -159,12 +159,18 @@ export default class ConceptsPlugin extends Plugin {
         }
       });
       const registered = Boolean(location.blockId && this.store.byBlockId(location.blockId));
+      // #region agent log
+      try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "A-B", location: "src/main.ts:decorateCallouts", message: "Resolved callout button state", data: { blockId: location.blockId ?? null, registered }, timestamp: Date.now() })}\n`); } catch {}
+      // #endregion
       setIcon(button, registered ? "check" : "book-plus");
       button.toggleClass("is-registered", registered);
       button.addEventListener("mousedown", (event) => event.stopPropagation());
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        // #region agent log
+        try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "A", location: "src/main.ts:decorateCallouts.click", message: "Callout action clicked", data: { blockId: location.blockId ?? null, registered, branch: registered ? "notice" : "form" }, timestamp: Date.now() })}\n`); } catch {}
+        // #endregion
         if (registered) {
           new Notice(`“${location.title}” is already a concept.`);
         } else {
@@ -195,6 +201,9 @@ export default class ConceptsPlugin extends Plugin {
     file: TFile | null,
     initialLocation: CalloutLocation
   ): Promise<void> {
+    // #region agent log
+    try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "B-C", location: "src/main.ts:openConceptForm", message: "Opening concept form", data: { hasFile: Boolean(file), blockId: initialLocation.blockId ?? null, initiallyRegistered: Boolean(initialLocation.blockId && this.store.byBlockId(initialLocation.blockId)) }, timestamp: Date.now() })}\n`); } catch {}
+    // #endregion
     if (!file) return;
     new ConceptFormModal(this.app, initialLocation.title, async ({ name, aliases }) => {
       const source = await this.app.vault.read(file);
@@ -208,6 +217,9 @@ export default class ConceptsPlugin extends Plugin {
           candidate.title === initialLocation.title &&
           candidate.type.toLocaleLowerCase() === initialLocation.type.toLocaleLowerCase()
       );
+      // #region agent log
+      try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "C-D", location: "src/main.ts:openConceptForm.submit", message: "Resolved submitted callout", data: { found: Boolean(location), initialBlockId: initialLocation.blockId ?? null, resolvedBlockId: location?.blockId ?? null, existingConcept: Boolean(location?.blockId && this.store.byBlockId(location.blockId)) }, timestamp: Date.now() })}\n`); } catch {}
+      // #endregion
       if (!location) {
         new Notice("Concepts could not find that callout. It may have moved or changed.");
         return;
@@ -313,6 +325,9 @@ export default class ConceptsPlugin extends Plugin {
   }
 
   private scheduleFileReconcile(file: TFile): void {
+    // #region agent log
+    try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "E", location: "src/main.ts:scheduleFileReconcile", message: "Scheduled file reconcile", data: { replacedPendingTimer: this.reconcileTimer !== undefined, pathLength: file.path.length }, timestamp: Date.now() })}\n`); } catch {}
+    // #endregion
     if (this.reconcileTimer !== undefined) window.clearTimeout(this.reconcileTimer);
     this.reconcileTimer = window.setTimeout(() => {
       this.reconcileTimer = undefined;
@@ -324,9 +339,13 @@ export default class ConceptsPlugin extends Plugin {
     const current = this.app.vault.getAbstractFileByPath(file.path);
     if (!(current instanceof TFile)) return;
     const source = await this.app.vault.cachedRead(current);
+    const parsed = parseCallouts(source);
+    // #region agent log
+    try { require("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify({ hypothesisId: "E", location: "src/main.ts:reconcileFile", message: "Reconciling selected modified file", data: { calloutCount: parsed.length, registeredBlockIds: parsed.flatMap((callout) => callout.blockId && this.store.byBlockId(callout.blockId) ? [callout.blockId] : []) }, timestamp: Date.now() })}\n`); } catch {}
+    // #endregion
     let moved = 0;
     let linksUpdated = 0;
-    for (const callout of parseCallouts(source)) {
+    for (const callout of parsed) {
       if (callout.blockId && this.store.byBlockId(callout.blockId)) {
         const result = await this.store.updateSourcePath(callout.blockId, current.path);
         if (result.moved) moved++;
