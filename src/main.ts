@@ -323,19 +323,30 @@ export default class ConceptsPlugin extends Plugin {
     const current = this.app.vault.getAbstractFileByPath(file.path);
     if (!(current instanceof TFile)) return;
     const source = await this.app.vault.cachedRead(current);
+    let linksUpdated = 0;
     for (const callout of parseCallouts(source)) {
       if (callout.blockId && this.store.byBlockId(callout.blockId)) {
-        await this.store.updateSourcePath(callout.blockId, current.path);
+        const result = await this.store.updateSourcePath(callout.blockId, current.path);
+        linksUpdated += result.linksUpdated;
       }
+    }
+    if (linksUpdated > 0) {
+      new Notice(`Concepts: updated ${linksUpdated} link${linksUpdated === 1 ? "" : "s"}.`);
     }
   }
 
   private async reconcileAll(showNotice: boolean): Promise<void> {
-    const changed = await this.store.reconcileLocations();
+    const { moved, linksUpdated } = await this.store.reconcileLocations();
     if (showNotice) {
-      new Notice(changed
-        ? `Updated ${changed} concept location${changed === 1 ? "" : "s"}.`
-        : "All concept locations are up to date.");
+      if (!moved) {
+        new Notice("All concept locations are up to date.");
+        return;
+      }
+      const locations = `${moved} concept location${moved === 1 ? "" : "s"}`;
+      const links = linksUpdated
+        ? ` and ${linksUpdated} link${linksUpdated === 1 ? "" : "s"}`
+        : "";
+      new Notice(`Updated ${locations}${links}.`);
     }
   }
 
