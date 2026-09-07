@@ -1,7 +1,7 @@
 {
   "id": "concepts",
   "name": "Concepts",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "minAppVersion": "1.9.0",
   "description": "Organize, track, and link concepts stored in callout blocks.",
   "author": "Concepts contributors",
