@@ -124,6 +124,71 @@ function escapeRegExp(value) {
 // src/concept-store.ts
 var import_obsidian = require("obsidian");
 
+// src/aliases.ts
+var REGEX_ALIAS = /^\/(.+)\/([A-Za-z]*)$/s;
+var cache = /* @__PURE__ */ new Map();
+function compileAlias(alias, caseSensitive) {
+  const key = `${caseSensitive ? "cs" : "ci"}:${alias}`;
+  if (!cache.has(key)) cache.set(key, buildAlias(alias, caseSensitive));
+  return cache.get(key);
+}
+function buildAlias(alias, caseSensitive) {
+  const trimmed = alias.trim();
+  if (!trimmed) return void 0;
+  const pattern = trimmed.match(REGEX_ALIAS);
+  return pattern ? regexAlias(trimmed, pattern[1], pattern[2], caseSensitive) : literalAlias(trimmed, caseSensitive);
+}
+function regexAlias(alias, source, flags, caseSensitive) {
+  const requested = new Set(flags.split(""));
+  if (!caseSensitive) requested.add("i");
+  const base = [...requested].filter((flag) => flag !== "g").join("");
+  try {
+    const scanning = new RegExp(source, `${base}g`);
+    const whole = new RegExp(`^(?:${source})$`, base);
+    return {
+      alias,
+      isRegex: true,
+      requiresWordBoundaries: false,
+      matchesWhole: (text) => whole.test(text),
+      findSpans: (line) => {
+        const spans = [];
+        scanning.lastIndex = 0;
+        let match = scanning.exec(line);
+        while (match) {
+          if (match[0].length > 0) {
+            spans.push({ start: match.index, end: match.index + match[0].length });
+          } else {
+            scanning.lastIndex++;
+          }
+          match = scanning.exec(line);
+        }
+        return spans;
+      }
+    };
+  } catch (e) {
+    return void 0;
+  }
+}
+function literalAlias(alias, caseSensitive) {
+  const sought = caseSensitive ? alias : alias.toLocaleLowerCase();
+  return {
+    alias,
+    isRegex: false,
+    requiresWordBoundaries: true,
+    matchesWhole: (text) => (caseSensitive ? text : text.toLocaleLowerCase()) === sought,
+    findSpans: (line) => {
+      const haystack = caseSensitive ? line : line.toLocaleLowerCase();
+      const spans = [];
+      let start = haystack.indexOf(sought);
+      while (start >= 0) {
+        spans.push({ start, end: start + sought.length });
+        start = haystack.indexOf(sought, start + 1);
+      }
+      return spans;
+    }
+  };
+}
+
 // src/links.ts
 function formatLinkUpdateNotice(linksUpdated) {
   return `Concepts finished updating links: ${linksUpdated} link${linksUpdated === 1 ? "" : "s"} updated.`;
@@ -173,11 +238,16 @@ var ConceptStore = class {
   }
   findByTerm(term, caseSensitive) {
     const sought = caseSensitive ? term : term.toLocaleLowerCase();
-    return this.all().filter(
-      (concept) => [concept.name, ...concept.aliases].some(
-        (candidate) => (caseSensitive ? candidate : candidate.toLocaleLowerCase()) === sought
-      )
-    );
+    return this.all().filter((concept) => {
+      const name = caseSensitive ? concept.name : concept.name.toLocaleLowerCase();
+      if (name === sought) return true;
+      return concept.aliases.some(
+        (alias) => {
+          var _a, _b;
+          return (_b = (_a = compileAlias(alias, caseSensitive)) == null ? void 0 : _a.matchesWhole(term)) != null ? _b : false;
+        }
+      );
+    });
   }
   async reload() {
     const next = /* @__PURE__ */ new Map();
@@ -432,6 +502,54 @@ function uniqueAliases(aliases, name) {
   });
 }
 
+// src/matching.ts
+function findConceptMatch(line, cursorCh, concepts, caseSensitive) {
+  const matches = [];
+  for (const concept of concepts) {
+    for (const term of [concept.name, ...concept.aliases]) {
+      const pattern = compileAlias(term, caseSensitive);
+      if (!pattern) continue;
+      for (const { start, end } of pattern.findSpans(line)) {
+        if (cursorCh < start || cursorCh > end) continue;
+        if (pattern.requiresWordBoundaries && !hasWordBoundaries(line, start, end)) continue;
+        const existing = matches.find((match) => match.start === start && match.end === end);
+        if (existing) {
+          if (!existing.concepts.includes(concept)) existing.concepts.push(concept);
+          continue;
+        }
+        matches.push({ text: line.slice(start, end), start, end, concepts: [concept] });
+      }
+    }
+  }
+  return matches.sort((a, b) => b.text.length - a.text.length)[0];
+}
+function hasWordBoundaries(line, start, end) {
+  const word = /[\p{L}\p{N}_]/u;
+  return !(start > 0 && word.test(line[start - 1])) && !(end < line.length && word.test(line[end]));
+}
+function insideWikiLink(line, position) {
+  const opening = line.lastIndexOf("[[", position);
+  const closing = line.lastIndexOf("]]", position);
+  return opening > closing;
+}
+
+// src/menu-position.ts
+function resolveMenuTop({
+  anchorTop,
+  anchorBottom,
+  menuHeight,
+  viewportHeight,
+  placement
+}) {
+  const above = anchorTop - menuHeight;
+  const fitsAbove = above >= 0;
+  const fitsBelow = anchorBottom + menuHeight <= viewportHeight;
+  if (placement === "above") {
+    return fitsAbove || !fitsBelow ? Math.max(above, 0) : anchorBottom;
+  }
+  return fitsBelow || !fitsAbove ? anchorBottom : above;
+}
+
 // src/modals.ts
 var import_obsidian2 = require("obsidian");
 var ConceptFormModal = class extends import_obsidian2.Modal {
@@ -506,7 +624,8 @@ var DEFAULT_SETTINGS = {
   showCalloutButtons: true,
   trackMovedCallouts: true,
   updateVaultLinks: true,
-  caseSensitive: false
+  caseSensitive: false,
+  popupPlacement: "below"
 };
 var ConceptsSettingTab = class extends import_obsidian3.PluginSettingTab {
   constructor(app, plugin) {
@@ -553,10 +672,19 @@ var ConceptsSettingTab = class extends import_obsidian3.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian3.Setting(this.containerEl).setName("Concept popup position").setDesc(
+      "Where the concept chooser opens relative to the line you are typing on. It flips to the other side when there is not enough room."
+    ).addDropdown(
+      (dropdown) => dropdown.addOption("below", "Below the line").addOption("above", "Above the line").setValue(this.plugin.settings.popupPlacement).onChange(async (value) => {
+        this.plugin.settings.popupPlacement = value === "above" ? "above" : "below";
+        await this.plugin.saveSettings();
+      })
+    );
   }
 };
 
 // src/main.ts
+var MENU_LIMIT = 50;
 var ConceptsPlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
@@ -577,6 +705,12 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
       name: "Link concept at cursor or selection",
       hotkeys: [{ modifiers: ["Mod", "Shift"], key: "k" }],
       editorCallback: (editor) => this.linkConcept(editor)
+    });
+    this.addCommand({
+      id: "choose-concept-link",
+      name: "Choose concept to link from popup",
+      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "l" }],
+      editorCallback: (editor) => this.chooseConceptLink(editor)
     });
     this.addCommand({
       id: "add-callout-at-cursor",
@@ -742,15 +876,106 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
       this.replaceWithLink(editor, match, match.concepts[0]);
       return;
     }
-    new ConceptChooserModal(
-      this.app,
+    this.showConceptPopup(
+      editor,
       match.concepts,
+      match.from,
+      `Link \u201C${match.text}\u201D`,
       (concept) => this.replaceWithLink(editor, match, concept)
-    ).open();
+    );
+  }
+  /**
+   * Opens the chooser on demand. A term under the cursor narrows the list and
+   * is replaced in place; otherwise the picked concept is inserted at the
+   * cursor under its own name.
+   */
+  chooseConceptLink(editor) {
+    var _a, _b;
+    const match = this.findTextMatch(editor);
+    const concepts = (_a = match == null ? void 0 : match.concepts) != null ? _a : this.store.all();
+    if (concepts.length === 0) {
+      new import_obsidian4.Notice("No concepts have been registered yet.");
+      return;
+    }
+    const anchor = (_b = match == null ? void 0 : match.from) != null ? _b : editor.getCursor("from");
+    const title = match ? `Link \u201C${match.text}\u201D` : "Insert concept link";
+    this.showConceptPopup(editor, concepts, anchor, title, (concept) => {
+      if (match) this.replaceWithLink(editor, match, concept);
+      else this.insertLink(editor, concept);
+    });
   }
   replaceWithLink(editor, match, concept) {
+    editor.replaceRange(this.linkTo(concept, match.text), match.from, match.to);
+  }
+  insertLink(editor, concept) {
+    editor.replaceSelection(this.linkTo(concept, concept.name));
+  }
+  linkTo(concept, display) {
     const target = this.store.targetLink(concept).slice(2, -2);
-    editor.replaceRange(`[[${target}|${match.text}]]`, match.from, match.to);
+    return `[[${target}|${display}]]`;
+  }
+  showConceptPopup(editor, concepts, anchor, title, onChoose) {
+    const rect = this.anchorRect(editor, anchor);
+    if (!rect) {
+      new ConceptChooserModal(this.app, concepts, onChoose).open();
+      return;
+    }
+    const menu = new import_obsidian4.Menu();
+    menu.addItem((item) => item.setTitle(title).setIsLabel(true));
+    for (const concept of concepts.slice(0, MENU_LIMIT)) {
+      menu.addItem(
+        (item) => item.setTitle(this.describeConcept(concept)).setIcon("book-open").onClick(() => onChoose(concept))
+      );
+    }
+    if (concepts.length > MENU_LIMIT) {
+      menu.addItem(
+        (item) => item.setTitle(`Search all ${concepts.length} concepts\u2026`).setIcon("search").onClick(() => new ConceptChooserModal(this.app, concepts, onChoose).open())
+      );
+    }
+    const placement = this.settings.popupPlacement;
+    menu.showAtPosition({
+      x: rect.left,
+      y: placement === "above" ? rect.top : rect.bottom
+    });
+    this.alignPopup(menu, rect);
+  }
+  /**
+   * `showAtPosition` cannot place a menu by its bottom edge, so the rendered
+   * height is measured and the final offset applied afterwards.
+   */
+  alignPopup(menu, rect) {
+    const dom = menu.dom;
+    if (!dom) return;
+    const menuHeight = dom.getBoundingClientRect().height || dom.offsetHeight;
+    if (!menuHeight) return;
+    dom.style.top = `${resolveMenuTop({
+      anchorTop: rect.top,
+      anchorBottom: rect.bottom,
+      menuHeight,
+      viewportHeight: window.innerHeight,
+      placement: this.settings.popupPlacement
+    })}px`;
+  }
+  describeConcept(concept) {
+    const fragment = document.createDocumentFragment();
+    fragment.createSpan({ text: concept.name });
+    const detail = [concept.calloutType, concept.sourcePath.replace(/\.md$/i, "")].filter(Boolean).join(" \xB7 ");
+    if (detail) {
+      fragment.createSpan({ cls: "concepts-menu-detail", text: detail });
+    }
+    return fragment;
+  }
+  /**
+   * Obsidian's editor exposes caret coordinates directly on some versions and
+   * only through the underlying CodeMirror view on others.
+   */
+  anchorRect(editor, position) {
+    var _a, _b, _c;
+    const candidate = editor;
+    const direct = (_a = candidate.coordsAtPos) == null ? void 0 : _a.call(candidate, position);
+    if (direct) return direct;
+    const viaCodeMirror = (_c = (_b = candidate.cm) == null ? void 0 : _b.coordsAtPos) == null ? void 0 : _c.call(_b, editor.posToOffset(position));
+    return viaCodeMirror != null ? viaCodeMirror : void 0;
   }
   findTextMatch(editor) {
     const from = editor.getCursor("from");
@@ -762,43 +987,20 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     }
     const cursor = editor.getCursor();
     const line = editor.getLine(cursor.line);
-    if (this.insideWikiLink(line, cursor.ch)) return void 0;
-    const normalizedLine = this.settings.caseSensitive ? line : line.toLocaleLowerCase();
-    const matches = [];
-    for (const concept of this.store.all()) {
-      for (const term of [concept.name, ...concept.aliases]) {
-        const sought = this.settings.caseSensitive ? term : term.toLocaleLowerCase();
-        let start = normalizedLine.indexOf(sought);
-        while (start >= 0) {
-          const end = start + sought.length;
-          if (cursor.ch >= start && cursor.ch <= end && this.hasWordBoundaries(line, start, end)) {
-            const existing = matches.find(
-              (match) => match.from.ch === start && match.to.ch === end
-            );
-            if (existing) existing.concepts.push(concept);
-            else {
-              matches.push({
-                text: line.slice(start, end),
-                from: { line: cursor.line, ch: start },
-                to: { line: cursor.line, ch: end },
-                concepts: [concept]
-              });
-            }
-          }
-          start = normalizedLine.indexOf(sought, start + 1);
-        }
-      }
-    }
-    return matches.sort((a, b) => b.text.length - a.text.length)[0];
-  }
-  hasWordBoundaries(line, start, end) {
-    const word = /[\p{L}\p{N}_]/u;
-    return !(start > 0 && word.test(line[start - 1])) && !(end < line.length && word.test(line[end]));
-  }
-  insideWikiLink(line, position) {
-    const opening = line.lastIndexOf("[[", position);
-    const closing = line.lastIndexOf("]]", position);
-    return opening > closing;
+    if (insideWikiLink(line, cursor.ch)) return void 0;
+    const match = findConceptMatch(
+      line,
+      cursor.ch,
+      this.store.all(),
+      this.settings.caseSensitive
+    );
+    if (!match) return void 0;
+    return {
+      text: match.text,
+      from: { line: cursor.line, ch: match.start },
+      to: { line: cursor.line, ch: match.end },
+      concepts: match.concepts
+    };
   }
   calloutAtCursor(editor) {
     const cursor = editor.getCursor();

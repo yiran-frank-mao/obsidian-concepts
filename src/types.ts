@@ -1,3 +1,5 @@
+import type { PopupPlacement } from "./menu-position";
+
 export interface Concept {
   id: string;
   name: string;
@@ -26,4 +28,5 @@ export interface ConceptsSettings {
   trackMovedCallouts: boolean;
   updateVaultLinks: boolean;
   caseSensitive: boolean;
+  popupPlacement: PopupPlacement;
 }

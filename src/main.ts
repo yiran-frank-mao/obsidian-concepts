@@ -17,6 +17,8 @@ import {
 } from "./callouts";
 import { ConceptStore } from "./concept-store";
 import { formatLinkUpdateNotice } from "./links";
+import { findConceptMatch, insideWikiLink } from "./matching";
+import { resolveMenuTop } from "./menu-position";
 import { ConceptChooserModal, ConceptFormModal } from "./modals";
 import { ConceptsSettingTab, DEFAULT_SETTINGS } from "./settings";
 import type { CalloutLocation, Concept, ConceptsSettings } from "./types";
@@ -27,6 +29,15 @@ interface TextMatch {
   to: EditorPosition;
   concepts: Concept[];
 }
+
+interface AnchorRect {
+  top: number;
+  bottom: number;
+  left: number;
+}
+
+/** Beyond this many entries the popup stops being quicker than searching. */
+const MENU_LIMIT = 50;
 
 export default class ConceptsPlugin extends Plugin {
   settings: ConceptsSettings = DEFAULT_SETTINGS;
@@ -48,6 +59,12 @@ export default class ConceptsPlugin extends Plugin {
       name: "Link concept at cursor or selection",
       hotkeys: [{ modifiers: ["Mod", "Shift"], key: "k" }],
       editorCallback: (editor) => this.linkConcept(editor)
+    });
+    this.addCommand({
+      id: "choose-concept-link",
+      name: "Choose concept to link from popup",
+      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "l" }],
+      editorCallback: (editor) => this.chooseConceptLink(editor)
     });
     this.addCommand({
       id: "add-callout-at-cursor",
@@ -251,14 +268,127 @@ export default class ConceptsPlugin extends Plugin {
       this.replaceWithLink(editor, match, match.concepts[0]);
       return;
     }
-    new ConceptChooserModal(this.app, match.concepts, (concept) =>
+    this.showConceptPopup(editor, match.concepts, match.from, `Link “${match.text}”`, (concept) =>
       this.replaceWithLink(editor, match, concept)
-    ).open();
+    );
+  }
+
+  /**
+   * Opens the chooser on demand. A term under the cursor narrows the list and
+   * is replaced in place; otherwise the picked concept is inserted at the
+   * cursor under its own name.
+   */
+  private chooseConceptLink(editor: Editor): void {
+    const match = this.findTextMatch(editor);
+    const concepts = match?.concepts ?? this.store.all();
+    if (concepts.length === 0) {
+      new Notice("No concepts have been registered yet.");
+      return;
+    }
+    const anchor = match?.from ?? editor.getCursor("from");
+    const title = match ? `Link “${match.text}”` : "Insert concept link";
+    this.showConceptPopup(editor, concepts, anchor, title, (concept) => {
+      if (match) this.replaceWithLink(editor, match, concept);
+      else this.insertLink(editor, concept);
+    });
   }
 
   private replaceWithLink(editor: Editor, match: TextMatch, concept: Concept): void {
+    editor.replaceRange(this.linkTo(concept, match.text), match.from, match.to);
+  }
+
+  private insertLink(editor: Editor, concept: Concept): void {
+    editor.replaceSelection(this.linkTo(concept, concept.name));
+  }
+
+  private linkTo(concept: Concept, display: string): string {
     const target = this.store.targetLink(concept).slice(2, -2);
-    editor.replaceRange(`[[${target}|${match.text}]]`, match.from, match.to);
+    return `[[${target}|${display}]]`;
+  }
+
+  private showConceptPopup(
+    editor: Editor,
+    concepts: Concept[],
+    anchor: EditorPosition,
+    title: string,
+    onChoose: (concept: Concept) => void
+  ): void {
+    const rect = this.anchorRect(editor, anchor);
+    if (!rect) {
+      new ConceptChooserModal(this.app, concepts, onChoose).open();
+      return;
+    }
+
+    const menu = new Menu();
+    menu.addItem((item) => item.setTitle(title).setIsLabel(true));
+    for (const concept of concepts.slice(0, MENU_LIMIT)) {
+      menu.addItem((item) =>
+        item
+          .setTitle(this.describeConcept(concept))
+          .setIcon("book-open")
+          .onClick(() => onChoose(concept))
+      );
+    }
+    if (concepts.length > MENU_LIMIT) {
+      menu.addItem((item) =>
+        item
+          .setTitle(`Search all ${concepts.length} concepts…`)
+          .setIcon("search")
+          .onClick(() => new ConceptChooserModal(this.app, concepts, onChoose).open())
+      );
+    }
+
+    const placement = this.settings.popupPlacement;
+    menu.showAtPosition({
+      x: rect.left,
+      y: placement === "above" ? rect.top : rect.bottom
+    });
+    this.alignPopup(menu, rect);
+  }
+
+  /**
+   * `showAtPosition` cannot place a menu by its bottom edge, so the rendered
+   * height is measured and the final offset applied afterwards.
+   */
+  private alignPopup(menu: Menu, rect: AnchorRect): void {
+    const dom = (menu as unknown as { dom?: HTMLElement }).dom;
+    if (!dom) return;
+    const menuHeight = dom.getBoundingClientRect().height || dom.offsetHeight;
+    if (!menuHeight) return;
+    dom.style.top = `${resolveMenuTop({
+      anchorTop: rect.top,
+      anchorBottom: rect.bottom,
+      menuHeight,
+      viewportHeight: window.innerHeight,
+      placement: this.settings.popupPlacement
+    })}px`;
+  }
+
+  private describeConcept(concept: Concept): DocumentFragment {
+    const fragment = document.createDocumentFragment();
+    fragment.createSpan({ text: concept.name });
+    const detail = [concept.calloutType, concept.sourcePath.replace(/\.md$/i, "")]
+      .filter(Boolean)
+      .join(" · ");
+    if (detail) {
+      fragment.createSpan({ cls: "concepts-menu-detail", text: detail });
+    }
+    return fragment;
+  }
+
+  /**
+   * Obsidian's editor exposes caret coordinates directly on some versions and
+   * only through the underlying CodeMirror view on others.
+   */
+  private anchorRect(editor: Editor, position: EditorPosition): AnchorRect | undefined {
+    const candidate = editor as unknown as {
+      coordsAtPos?: (pos: EditorPosition) => AnchorRect | null | undefined;
+      cm?: { coordsAtPos?: (offset: number) => AnchorRect | null | undefined };
+    };
+    const direct = candidate.coordsAtPos?.(position);
+    if (direct) return direct;
+    const viaCodeMirror = candidate.cm?.coordsAtPos?.(editor.posToOffset(position));
+    return viaCodeMirror ?? undefined;
   }
 
   private findTextMatch(editor: Editor): TextMatch | undefined {
@@ -272,51 +402,21 @@ export default class ConceptsPlugin extends Plugin {
 
     const cursor = editor.getCursor();
     const line = editor.getLine(cursor.line);
-    if (this.insideWikiLink(line, cursor.ch)) return undefined;
-    const normalizedLine = this.settings.caseSensitive ? line : line.toLocaleLowerCase();
-    const matches: TextMatch[] = [];
+    if (insideWikiLink(line, cursor.ch)) return undefined;
 
-    for (const concept of this.store.all()) {
-      for (const term of [concept.name, ...concept.aliases]) {
-        const sought = this.settings.caseSensitive ? term : term.toLocaleLowerCase();
-        let start = normalizedLine.indexOf(sought);
-        while (start >= 0) {
-          const end = start + sought.length;
-          if (
-            cursor.ch >= start &&
-            cursor.ch <= end &&
-            this.hasWordBoundaries(line, start, end)
-          ) {
-            const existing = matches.find((match) =>
-              match.from.ch === start && match.to.ch === end
-            );
-            if (existing) existing.concepts.push(concept);
-            else {
-              matches.push({
-                text: line.slice(start, end),
-                from: { line: cursor.line, ch: start },
-                to: { line: cursor.line, ch: end },
-                concepts: [concept]
-              });
-            }
-          }
-          start = normalizedLine.indexOf(sought, start + 1);
-        }
-      }
-    }
-    return matches.sort((a, b) => b.text.length - a.text.length)[0];
-  }
-
-  private hasWordBoundaries(line: string, start: number, end: number): boolean {
-    const word = /[\p{L}\p{N}_]/u;
-    return !(start > 0 && word.test(line[start - 1]))
-      && !(end < line.length && word.test(line[end]));
-  }
-
-  private insideWikiLink(line: string, position: number): boolean {
-    const opening = line.lastIndexOf("[[", position);
-    const closing = line.lastIndexOf("]]", position);
-    return opening > closing;
+    const match = findConceptMatch(
+      line,
+      cursor.ch,
+      this.store.all(),
+      this.settings.caseSensitive
+    );
+    if (!match) return undefined;
+    return {
+      text: match.text,
+      from: { line: cursor.line, ch: match.start },
+      to: { line: cursor.line, ch: match.end },
+      concepts: match.concepts
+    };
   }
 
   private calloutAtCursor(editor: Editor): CalloutLocation | undefined {

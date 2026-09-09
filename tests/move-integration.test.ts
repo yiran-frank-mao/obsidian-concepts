@@ -197,6 +197,21 @@ describe("ConceptStore link updates when a callout moves", () => {
     );
   });
 
+  it("matches a selected term against literal and regex aliases", async () => {
+    await store.create("Cartesian product", ["/products?/"], "Sets/Product.md", "concept-sets", "definition");
+    await store.create("Product topology", ["product"], "Spaces/Product.md", "concept-spaces", "definition");
+
+    expect(store.findByTerm("products", false).map((concept) => concept.name)).toEqual([
+      "Cartesian product"
+    ]);
+    // Both aliases claim the singular, which is what makes the popup necessary.
+    expect(store.findByTerm("product", false).map((concept) => concept.name)).toEqual([
+      "Cartesian product",
+      "Product topology"
+    ]);
+    expect(store.findByTerm("coproduct", false)).toEqual([]);
+  });
+
   it("keeps create idempotent while moving an already registered block", async () => {
     const concept = await store.create(
       "Banach space",
