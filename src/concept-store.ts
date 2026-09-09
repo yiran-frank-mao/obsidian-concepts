@@ -6,6 +6,7 @@ import {
   TFile
 } from "obsidian";
 import type { Concept, ConceptsSettings } from "./types";
+import { compileAlias } from "./aliases";
 import { parseCallouts } from "./callouts";
 import { rewriteBlockLinks } from "./links";
 
@@ -63,11 +64,13 @@ export class ConceptStore {
 
   findByTerm(term: string, caseSensitive: boolean): Concept[] {
     const sought = caseSensitive ? term : term.toLocaleLowerCase();
-    return this.all().filter((concept) =>
-      [concept.name, ...concept.aliases].some((candidate) =>
-        (caseSensitive ? candidate : candidate.toLocaleLowerCase()) === sought
-      )
-    );
+    return this.all().filter((concept) => {
+      const name = caseSensitive ? concept.name : concept.name.toLocaleLowerCase();
+      if (name === sought) return true;
+      return concept.aliases.some((alias) =>
+        compileAlias(alias, caseSensitive)?.matchesWhole(term) ?? false
+      );
+    });
   }
 
   async reload(): Promise<void> {

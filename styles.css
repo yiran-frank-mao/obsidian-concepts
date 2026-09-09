@@ -49,3 +49,9 @@
     opacity: 1;
   }
 }
+
+.concepts-menu-detail {
+  color: var(--text-muted);
+  display: block;
+  font-size: var(--font-ui-smaller);
+}

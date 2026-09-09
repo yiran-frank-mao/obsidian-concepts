@@ -8,7 +8,8 @@ export const DEFAULT_SETTINGS: ConceptsSettings = {
   showCalloutButtons: true,
   trackMovedCallouts: true,
   updateVaultLinks: true,
-  caseSensitive: false
+  caseSensitive: false,
+  popupPlacement: "below"
 };
 
 export class ConceptsSettingTab extends PluginSettingTab {
@@ -73,6 +74,21 @@ export class ConceptsSettingTab extends PluginSettingTab {
           this.plugin.settings.caseSensitive = value;
           await this.plugin.saveSettings();
         })
+      );
+    new Setting(this.containerEl)
+      .setName("Concept popup position")
+      .setDesc(
+        "Where the concept chooser opens relative to the line you are typing on. It flips to the other side when there is not enough room."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("below", "Below the line")
+          .addOption("above", "Above the line")
+          .setValue(this.plugin.settings.popupPlacement)
+          .onChange(async (value) => {
+            this.plugin.settings.popupPlacement = value === "above" ? "above" : "below";
+            await this.plugin.saveSettings();
+          })
       );
   }
 }
