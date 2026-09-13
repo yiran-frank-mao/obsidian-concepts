@@ -43,11 +43,11 @@ export default class ConceptsPlugin extends Plugin {
   settings: ConceptsSettings = DEFAULT_SETTINGS;
   private store!: ConceptStore;
   private reconcileTimer: number | undefined;
+  private databaseStart: Promise<void> | undefined;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.store = new ConceptStore(this.app, this.settings);
-    await this.store.initialize();
     this.addSettingTab(new ConceptsSettingTab(this.app, this));
 
     this.registerMarkdownPostProcessor((element, context) =>
@@ -85,7 +85,7 @@ export default class ConceptsPlugin extends Plugin {
     this.addCommand({
       id: "rebuild-concept-locations",
       name: "Rebuild concept locations",
-      callback: () => void this.reconcileAll(true)
+      callback: () => void this.rebuildLocations()
     });
 
     this.registerEvent(
@@ -130,9 +130,10 @@ export default class ConceptsPlugin extends Plugin {
       })
     );
 
-    if (this.settings.trackMovedCallouts) {
-      this.app.workspace.onLayoutReady(() => void this.reconcileAll(false));
-    }
+    // Obsidian loads plugins while it is still indexing the vault, so the
+    // database cannot be opened until the layout is ready. Everything above
+    // is registered synchronously so the plugin always finishes loading.
+    this.app.workspace.onLayoutReady(() => void this.startDatabase());
   }
 
   onunload(): void {
@@ -140,7 +141,33 @@ export default class ConceptsPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    let stored: Partial<ConceptsSettings> | undefined;
+    try {
+      stored = (await this.loadData()) as Partial<ConceptsSettings> | null ?? undefined;
+    } catch (error) {
+      console.error("Concepts could not read its settings; using defaults.", error);
+    }
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
+  }
+
+  /** Opens the database once, retrying on a later call if it failed. */
+  private startDatabase(): Promise<void> {
+    this.databaseStart ??= this.openDatabase();
+    return this.databaseStart;
+  }
+
+  private async openDatabase(): Promise<void> {
+    try {
+      await this.store.initialize();
+      this.refreshRenderedCallouts();
+      if (this.settings.trackMovedCallouts) await this.reconcileAll(false);
+    } catch (error) {
+      this.databaseStart = undefined;
+      console.error("Concepts could not open its concept database.", error);
+      new Notice(
+        "Concepts could not open its database. Run “Rebuild concept locations” to try again."
+      );
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -450,6 +477,32 @@ export default class ConceptsPlugin extends Plugin {
     if (moved > 0 && this.settings.updateVaultLinks) {
       new Notice(formatLinkUpdateNotice(linksUpdated));
     }
+  }
+
+  /**
+   * Notes can finish rendering before the database is open, which would leave
+   * registered callouts showing the “add concept” button. Re-rendering the
+   * open notes settles them on the right state.
+   */
+  private refreshRenderedCallouts(): void {
+    const workspace = this.app.workspace as typeof this.app.workspace & {
+      getLeavesOfType?: (type: string) => Array<{ view?: unknown }>;
+    };
+    for (const leaf of workspace.getLeavesOfType?.("markdown") ?? []) {
+      const preview = (leaf.view as { previewMode?: { rerender?: (full?: boolean) => void } })
+        ?.previewMode;
+      try {
+        preview?.rerender?.(true);
+      } catch (error) {
+        console.error("Concepts could not refresh a rendered note.", error);
+      }
+    }
+  }
+
+  /** Also recovers a database whose start-up failed. */
+  private async rebuildLocations(): Promise<void> {
+    await this.startDatabase();
+    await this.reconcileAll(true);
   }
 
   private async reconcileAll(showNotice: boolean): Promise<void> {

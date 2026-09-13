@@ -271,7 +271,11 @@ export class ConceptStore {
       "      - updated",
       ""
     ].join("\n");
-    await this.app.vault.create(path, content);
+    try {
+      await this.app.vault.create(path, content);
+    } catch (error) {
+      if (!alreadyExists(error)) throw error;
+    }
   }
 
   private async ensureFolder(path: string): Promise<void> {
@@ -279,8 +283,10 @@ export class ConceptStore {
     if (!normalized || this.app.vault.getAbstractFileByPath(normalized)) return;
     const parent = normalized.split("/").slice(0, -1).join("/");
     if (parent) await this.ensureFolder(parent);
-    if (!this.app.vault.getAbstractFileByPath(normalized)) {
+    try {
       await this.app.vault.createFolder(normalized);
+    } catch (error) {
+      if (!alreadyExists(error)) throw error;
     }
   }
 
@@ -352,6 +358,16 @@ export class ConceptStore {
     return globalThis.crypto?.randomUUID?.()
       ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   }
+}
+
+/**
+ * Obsidian's file index is still filling in while plugins load, so a path can
+ * look missing and then be rejected as already existing. That collision is
+ * benign: the folder or file the plugin wanted is already there.
+ */
+function alreadyExists(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLocaleLowerCase().includes("already exists");
 }
 
 function toAliases(value: unknown): string[] {

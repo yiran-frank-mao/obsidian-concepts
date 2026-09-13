@@ -120,6 +120,10 @@ Concept records are plain Markdown files, so the database remains usable without
 | `concept_id` | Stable database identifier |
 | `created`, `updated` | ISO timestamps |
 
+## Start-up behaviour
+
+Obsidian loads plugins while it is still indexing the vault, so Concepts registers its commands, settings, and callout buttons immediately and opens the concept database once the workspace is ready. Notes that were already rendered are refreshed at that point so their callout buttons show the correct state. If the database cannot be opened, the plugin stays loaded and reports the problem; **Concepts: Rebuild concept locations** retries.
+
 ## Limitations
 
 - The callout title should be plain text. Rich Markdown in a title is normalized when used as a concept name.
