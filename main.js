@@ -418,15 +418,21 @@ var ConceptStore = class {
       "      - updated",
       ""
     ].join("\n");
-    await this.app.vault.create(path, content);
+    try {
+      await this.app.vault.create(path, content);
+    } catch (error) {
+      if (!alreadyExists(error)) throw error;
+    }
   }
   async ensureFolder(path) {
     const normalized = (0, import_obsidian.normalizePath)(path);
     if (!normalized || this.app.vault.getAbstractFileByPath(normalized)) return;
     const parent = normalized.split("/").slice(0, -1).join("/");
     if (parent) await this.ensureFolder(parent);
-    if (!this.app.vault.getAbstractFileByPath(normalized)) {
+    try {
       await this.app.vault.createFolder(normalized);
+    } catch (error) {
+      if (!alreadyExists(error)) throw error;
     }
   }
   async availableRecordPath(name, id) {
@@ -487,6 +493,10 @@ ${this.targetLink(concept)}
     return (_c = (_b = (_a = globalThis.crypto) == null ? void 0 : _a.randomUUID) == null ? void 0 : _b.call(_a)) != null ? _c : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   }
 };
+function alreadyExists(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLocaleLowerCase().includes("already exists");
+}
 function toAliases(value) {
   if (Array.isArray(value)) return value.filter((item) => typeof item === "string");
   if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -691,11 +701,11 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     __publicField(this, "settings", DEFAULT_SETTINGS);
     __publicField(this, "store");
     __publicField(this, "reconcileTimer");
+    __publicField(this, "databaseStart");
   }
   async onload() {
     await this.loadSettings();
     this.store = new ConceptStore(this.app, this.settings);
-    await this.store.initialize();
     this.addSettingTab(new ConceptsSettingTab(this.app, this));
     this.registerMarkdownPostProcessor(
       (element, context) => this.decorateCallouts(element, context)
@@ -731,7 +741,7 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     this.addCommand({
       id: "rebuild-concept-locations",
       name: "Rebuild concept locations",
-      callback: () => void this.reconcileAll(true)
+      callback: () => void this.rebuildLocations()
     });
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor) => {
@@ -768,15 +778,39 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
         if (this.settings.trackMovedCallouts) this.scheduleFileReconcile(file);
       })
     );
-    if (this.settings.trackMovedCallouts) {
-      this.app.workspace.onLayoutReady(() => void this.reconcileAll(false));
-    }
+    this.app.workspace.onLayoutReady(() => void this.startDatabase());
   }
   onunload() {
     if (this.reconcileTimer !== void 0) window.clearTimeout(this.reconcileTimer);
   }
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    var _a;
+    let stored;
+    try {
+      stored = (_a = await this.loadData()) != null ? _a : void 0;
+    } catch (error) {
+      console.error("Concepts could not read its settings; using defaults.", error);
+    }
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
+  }
+  /** Opens the database once, retrying on a later call if it failed. */
+  startDatabase() {
+    var _a;
+    (_a = this.databaseStart) != null ? _a : this.databaseStart = this.openDatabase();
+    return this.databaseStart;
+  }
+  async openDatabase() {
+    try {
+      await this.store.initialize();
+      this.refreshRenderedCallouts();
+      if (this.settings.trackMovedCallouts) await this.reconcileAll(false);
+    } catch (error) {
+      this.databaseStart = void 0;
+      console.error("Concepts could not open its concept database.", error);
+      new import_obsidian4.Notice(
+        "Concepts could not open its database. Run \u201CRebuild concept locations\u201D to try again."
+      );
+    }
   }
   async saveSettings() {
     await this.saveData(this.settings);
@@ -1031,6 +1065,28 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     if (moved > 0 && this.settings.updateVaultLinks) {
       new import_obsidian4.Notice(formatLinkUpdateNotice(linksUpdated));
     }
+  }
+  /**
+   * Notes can finish rendering before the database is open, which would leave
+   * registered callouts showing the “add concept” button. Re-rendering the
+   * open notes settles them on the right state.
+   */
+  refreshRenderedCallouts() {
+    var _a, _b, _c, _d;
+    const workspace = this.app.workspace;
+    for (const leaf of (_b = (_a = workspace.getLeavesOfType) == null ? void 0 : _a.call(workspace, "markdown")) != null ? _b : []) {
+      const preview = (_c = leaf.view) == null ? void 0 : _c.previewMode;
+      try {
+        (_d = preview == null ? void 0 : preview.rerender) == null ? void 0 : _d.call(preview, true);
+      } catch (error) {
+        console.error("Concepts could not refresh a rendered note.", error);
+      }
+    }
+  }
+  /** Also recovers a database whose start-up failed. */
+  async rebuildLocations() {
+    await this.startDatabase();
+    await this.reconcileAll(true);
   }
   async reconcileAll(showNotice) {
     const { moved, linksUpdated } = await this.store.reconcileLocations();

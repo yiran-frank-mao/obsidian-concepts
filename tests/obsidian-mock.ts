@@ -139,14 +139,41 @@ export const notices: string[] = [];
 
 export function setIcon(_el: HTMLElement, _icon: string): void {}
 
+export interface Command {
+  id: string;
+  name: string;
+}
+
 export class Plugin {
+  /** What the plugin managed to register, so load failures are visible. */
+  commands: Command[] = [];
+  settingTabs: unknown[] = [];
+  postProcessors: unknown[] = [];
+  registeredEvents: unknown[] = [];
+  data: unknown = {};
+
   constructor(public app: unknown, public manifest: unknown) {}
-  addCommand(command: unknown): unknown { return command; }
-  addSettingTab(_tab: unknown): void {}
-  registerEvent(_ref: unknown): void {}
-  registerMarkdownPostProcessor(_processor: unknown): unknown { return _processor; }
-  async loadData(): Promise<unknown> { return {}; }
-  async saveData(_data: unknown): Promise<void> {}
+
+  addCommand(command: Command): Command {
+    this.commands.push(command);
+    return command;
+  }
+  addSettingTab(tab: unknown): void {
+    this.settingTabs.push(tab);
+  }
+  registerEvent(ref: unknown): void {
+    this.registeredEvents.push(ref);
+  }
+  registerMarkdownPostProcessor(processor: unknown): unknown {
+    this.postProcessors.push(processor);
+    return processor;
+  }
+  async loadData(): Promise<unknown> {
+    return this.data;
+  }
+  async saveData(data: unknown): Promise<void> {
+    this.data = data;
+  }
 }
 
 export function normalizePath(path: string): string {
