@@ -1,5 +1,8 @@
 import type { PopupPlacement } from "./menu-position";
 
+/** Which interface “Choose concept to link from popup” opens. */
+export type ConceptLinkChooser = "search" | "menu";
+
 export interface Concept {
   id: string;
   name: string;
@@ -29,4 +32,6 @@ export interface ConceptsSettings {
   updateVaultLinks: boolean;
   caseSensitive: boolean;
   popupPlacement: PopupPlacement;
+  /** `search` opens the searchable list; `menu` opens the small popup. */
+  conceptLinkChooser: ConceptLinkChooser;
 }

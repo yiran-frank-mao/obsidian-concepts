@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
 import ConceptsPlugin from "../src/main";
+import { ConceptChooserModal } from "../src/modals";
 import { DEFAULT_SETTINGS } from "../src/settings";
 import { MENU_DOM_HEIGHT, createdMenus, notices, openedModals } from "./obsidian-mock";
-import type { Concept, PopupPlacement } from "../src/types";
+import type { Concept, ConceptLinkChooser, PopupPlacement } from "../src/types";
 
 // Obsidian augments DOM nodes with these helpers at runtime.
 type SpanOptions = { text?: string; cls?: string };
@@ -83,9 +84,13 @@ class FakeEditor {
   }
 }
 
-function makePlugin(concepts: Concept[], placement: PopupPlacement = "below") {
+function makePlugin(
+  concepts: Concept[],
+  placement: PopupPlacement = "below",
+  conceptLinkChooser: ConceptLinkChooser = "search"
+) {
   const plugin = new ConceptsPlugin({} as never, {} as never);
-  plugin.settings = { ...DEFAULT_SETTINGS, popupPlacement: placement };
+  plugin.settings = { ...DEFAULT_SETTINGS, popupPlacement: placement, conceptLinkChooser };
   (plugin as unknown as Record<string, unknown>).store = {
     all: () => concepts,
     findByTerm: (term: string) =>
@@ -103,6 +108,11 @@ const linkConcept = (plugin: ConceptsPlugin, editor: FakeEditor) =>
 
 const chooseConceptLink = (plugin: ConceptsPlugin, editor: FakeEditor) =>
   (plugin as unknown as { chooseConceptLink(editor: unknown): void }).chooseConceptLink(editor);
+
+function openedChooser(): ConceptChooserModal {
+  expect(openedModals).toHaveLength(1);
+  return openedModals[0] as ConceptChooserModal;
+}
 
 const line = "The product of two spaces";
 const insideProduct = line.indexOf("product") + 3;
@@ -204,10 +214,77 @@ describe("popup placement", () => {
 });
 
 describe("manually triggering the popup", () => {
-  it("lists every concept when the cursor is not on a known term", () => {
+  it("opens the searchable list of every concept when the cursor is not on a known term", () => {
     const plugin = makePlugin([productTopology, banachSpace]);
     chooseConceptLink(plugin, new FakeEditor("Nothing familiar here", 3));
 
+    expect(createdMenus).toHaveLength(0);
+    expect(openedChooser().getSuggestions("").map((concept) => concept.name)).toEqual([
+      "Product topology",
+      "Banach space"
+    ]);
+  });
+
+  it("filters that list as the query narrows", () => {
+    chooseConceptLink(
+      makePlugin([productTopology, banachSpace]),
+      new FakeEditor("Nothing familiar here", 3)
+    );
+
+    expect(openedChooser().getSuggestions("banach").map((concept) => concept.name)).toEqual([
+      "Banach space"
+    ]);
+  });
+
+  it("inserts the chosen concept under its own name", () => {
+    const editor = new FakeEditor("Nothing familiar here", 3);
+    chooseConceptLink(makePlugin([productTopology, banachSpace]), editor);
+
+    openedChooser().onChooseSuggestion(banachSpace);
+    expect(editor.replacements).toEqual([
+      { text: "[[Analysis/Banach#^concept-banach|Banach space]]" }
+    ]);
+  });
+
+  it("narrows the searchable list when the cursor is on a known term", () => {
+    const plugin = makePlugin([productTopology, cartesianProduct, banachSpace]);
+    chooseConceptLink(plugin, new FakeEditor(line, insideProduct));
+
+    expect(openedChooser().getSuggestions("").map((concept) => concept.name)).toEqual([
+      "Product topology",
+      "Cartesian product"
+    ]);
+  });
+
+  it("keeps the typed text as the display name", () => {
+    const editor = new FakeEditor(line, insideProduct);
+    chooseConceptLink(makePlugin([productTopology, cartesianProduct, banachSpace]), editor);
+
+    openedChooser().onChooseSuggestion(cartesianProduct);
+    expect(editor.replacements).toEqual([
+      {
+        text: "[[Sets/Product#^concept-sets|product]]",
+        from: { line: 0, ch: 4 },
+        to: { line: 0, ch: 11 }
+      }
+    ]);
+  });
+
+  it("reports when the database is empty instead of opening an empty popup", () => {
+    chooseConceptLink(makePlugin([]), new FakeEditor("Nothing here", 3));
+
+    expect(createdMenus).toHaveLength(0);
+    expect(openedModals).toHaveLength(0);
+    expect(notices).toEqual(["No concepts have been registered yet."]);
+  });
+});
+
+describe("choosing the small popup menu", () => {
+  it("lists every concept beside the cursor when configured", () => {
+    const plugin = makePlugin([productTopology, banachSpace], "below", "menu");
+    chooseConceptLink(plugin, new FakeEditor("Nothing familiar here", 3));
+
+    expect(openedModals).toHaveLength(0);
     expect(createdMenus).toHaveLength(1);
     expect(createdMenus[0].items[0].title).toBe("Insert concept link");
     expect(createdMenus[0].items).toHaveLength(3);
@@ -215,7 +292,7 @@ describe("manually triggering the popup", () => {
 
   it("inserts the chosen concept under its own name", () => {
     const editor = new FakeEditor("Nothing familiar here", 3);
-    chooseConceptLink(makePlugin([productTopology, banachSpace]), editor);
+    chooseConceptLink(makePlugin([productTopology, banachSpace], "below", "menu"), editor);
 
     createdMenus[0].items[2].clickHandler?.();
     expect(editor.replacements).toEqual([
@@ -224,17 +301,10 @@ describe("manually triggering the popup", () => {
   });
 
   it("narrows to the matching concepts when the cursor is on a known term", () => {
-    const plugin = makePlugin([productTopology, cartesianProduct, banachSpace]);
+    const plugin = makePlugin([productTopology, cartesianProduct, banachSpace], "below", "menu");
     chooseConceptLink(plugin, new FakeEditor(line, insideProduct));
 
     expect(createdMenus[0].items[0].title).toBe("Link “product”");
     expect(createdMenus[0].items).toHaveLength(3);
-  });
-
-  it("reports when the database is empty instead of opening an empty popup", () => {
-    chooseConceptLink(makePlugin([]), new FakeEditor("Nothing here", 3));
-
-    expect(createdMenus).toHaveLength(0);
-    expect(notices).toEqual(["No concepts have been registered yet."]);
   });
 });

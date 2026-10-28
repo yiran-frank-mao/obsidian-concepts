@@ -72,10 +72,12 @@ export class ConceptChooserModal extends SuggestModal<Concept> {
   constructor(
     app: App,
     private readonly concepts: Concept[],
-    private readonly onChoose: (concept: Concept) => void
+    private readonly onChoose: (concept: Concept) => void,
+    title = "Search concepts"
   ) {
     super(app);
-    this.setPlaceholder("Choose the concept to link");
+    this.setTitle(title);
+    this.setPlaceholder("Search concepts");
   }
 
   getSuggestions(query: string): Concept[] {

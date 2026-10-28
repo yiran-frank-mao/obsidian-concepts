@@ -231,6 +231,7 @@ describe("loading while Obsidian is still indexing the vault", () => {
     await plugin.onload();
 
     expect(plugin.settings.popupPlacement).toBe("below");
+    expect(plugin.settings.conceptLinkChooser).toBe("search");
     expect(plugin.commands).toHaveLength(5);
   });
 
