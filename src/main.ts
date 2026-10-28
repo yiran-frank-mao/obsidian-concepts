@@ -303,7 +303,8 @@ export default class ConceptsPlugin extends Plugin {
   /**
    * Opens the chooser on demand. A term under the cursor narrows the list and
    * is replaced in place; otherwise the picked concept is inserted at the
-   * cursor under its own name.
+   * cursor under its own name. The searchable list is the default; settings
+   * can switch this command back to the small popup menu.
    */
   private chooseConceptLink(editor: Editor): void {
     const match = this.findTextMatch(editor);
@@ -314,10 +315,15 @@ export default class ConceptsPlugin extends Plugin {
     }
     const anchor = match?.from ?? editor.getCursor("from");
     const title = match ? `Link “${match.text}”` : "Insert concept link";
-    this.showConceptPopup(editor, concepts, anchor, title, (concept) => {
+    const onChoose = (concept: Concept) => {
       if (match) this.replaceWithLink(editor, match, concept);
       else this.insertLink(editor, concept);
-    });
+    };
+    if (this.settings.conceptLinkChooser === "search") {
+      new ConceptChooserModal(this.app, concepts, onChoose, title).open();
+      return;
+    }
+    this.showConceptPopup(editor, concepts, anchor, title, onChoose);
   }
 
   private replaceWithLink(editor: Editor, match: TextMatch, concept: Concept): void {

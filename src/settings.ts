@@ -9,7 +9,8 @@ export const DEFAULT_SETTINGS: ConceptsSettings = {
   trackMovedCallouts: true,
   updateVaultLinks: true,
   caseSensitive: false,
-  popupPlacement: "below"
+  popupPlacement: "below",
+  conceptLinkChooser: "search"
 };
 
 export class ConceptsSettingTab extends PluginSettingTab {
@@ -76,9 +77,24 @@ export class ConceptsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(this.containerEl)
+      .setName("Choose concept link interface")
+      .setDesc(
+        "What “Choose concept to link from popup” opens. Search all concepts is a searchable list. Popup menu is the small list beside the cursor. Choosing between concepts that share a term still uses the popup menu."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("search", "Search all concepts")
+          .addOption("menu", "Popup menu")
+          .setValue(this.plugin.settings.conceptLinkChooser)
+          .onChange(async (value) => {
+            this.plugin.settings.conceptLinkChooser = value === "menu" ? "menu" : "search";
+            await this.plugin.saveSettings();
+          })
+      );
+    new Setting(this.containerEl)
       .setName("Concept popup position")
       .setDesc(
-        "Where the concept chooser opens relative to the line you are typing on. It flips to the other side when there is not enough room."
+        "Where the popup menu opens relative to the line you are typing on. It flips to the other side when there is not enough room."
       )
       .addDropdown((dropdown) =>
         dropdown

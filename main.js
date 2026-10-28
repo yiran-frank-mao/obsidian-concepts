@@ -601,11 +601,12 @@ var ConceptFormModal = class extends import_obsidian2.Modal {
   }
 };
 var ConceptChooserModal = class extends import_obsidian2.SuggestModal {
-  constructor(app, concepts, onChoose) {
+  constructor(app, concepts, onChoose, title = "Search concepts") {
     super(app);
     __publicField(this, "concepts", concepts);
     __publicField(this, "onChoose", onChoose);
-    this.setPlaceholder("Choose the concept to link");
+    this.setTitle(title);
+    this.setPlaceholder("Search concepts");
   }
   getSuggestions(query) {
     const normalized = query.toLocaleLowerCase();
@@ -635,7 +636,8 @@ var DEFAULT_SETTINGS = {
   trackMovedCallouts: true,
   updateVaultLinks: true,
   caseSensitive: false,
-  popupPlacement: "below"
+  popupPlacement: "below",
+  conceptLinkChooser: "search"
 };
 var ConceptsSettingTab = class extends import_obsidian3.PluginSettingTab {
   constructor(app, plugin) {
@@ -682,8 +684,16 @@ var ConceptsSettingTab = class extends import_obsidian3.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian3.Setting(this.containerEl).setName("Choose concept link interface").setDesc(
+      "What \u201CChoose concept to link from popup\u201D opens. Search all concepts is a searchable list. Popup menu is the small list beside the cursor. Choosing between concepts that share a term still uses the popup menu."
+    ).addDropdown(
+      (dropdown) => dropdown.addOption("search", "Search all concepts").addOption("menu", "Popup menu").setValue(this.plugin.settings.conceptLinkChooser).onChange(async (value) => {
+        this.plugin.settings.conceptLinkChooser = value === "menu" ? "menu" : "search";
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian3.Setting(this.containerEl).setName("Concept popup position").setDesc(
-      "Where the concept chooser opens relative to the line you are typing on. It flips to the other side when there is not enough room."
+      "Where the popup menu opens relative to the line you are typing on. It flips to the other side when there is not enough room."
     ).addDropdown(
       (dropdown) => dropdown.addOption("below", "Below the line").addOption("above", "Above the line").setValue(this.plugin.settings.popupPlacement).onChange(async (value) => {
         this.plugin.settings.popupPlacement = value === "above" ? "above" : "below";
@@ -921,7 +931,8 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
   /**
    * Opens the chooser on demand. A term under the cursor narrows the list and
    * is replaced in place; otherwise the picked concept is inserted at the
-   * cursor under its own name.
+   * cursor under its own name. The searchable list is the default; settings
+   * can switch this command back to the small popup menu.
    */
   chooseConceptLink(editor) {
     var _a, _b;
@@ -933,10 +944,15 @@ var ConceptsPlugin = class extends import_obsidian4.Plugin {
     }
     const anchor = (_b = match == null ? void 0 : match.from) != null ? _b : editor.getCursor("from");
     const title = match ? `Link \u201C${match.text}\u201D` : "Insert concept link";
-    this.showConceptPopup(editor, concepts, anchor, title, (concept) => {
+    const onChoose = (concept) => {
       if (match) this.replaceWithLink(editor, match, concept);
       else this.insertLink(editor, concept);
-    });
+    };
+    if (this.settings.conceptLinkChooser === "search") {
+      new ConceptChooserModal(this.app, concepts, onChoose, title).open();
+      return;
+    }
+    this.showConceptPopup(editor, concepts, anchor, title, onChoose);
   }
   replaceWithLink(editor, match, concept) {
     editor.replaceRange(this.linkTo(concept, match.text), match.from, match.to);

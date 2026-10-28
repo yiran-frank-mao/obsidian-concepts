@@ -9,7 +9,7 @@ Concepts is an Obsidian plugin for building a wiki-like concept index from defin
 - Give each registered callout a stable Obsidian block ID.
 - Link a selected name or alias with the **Concepts: Link concept at cursor or selection** command (`Ctrl/Cmd+Shift+K` by default).
 - Choose between concepts that share a term from a popup next to the line you are typing on.
-- Insert any concept link on demand with **Concepts: Choose concept to link from popup** (`Ctrl/Cmd+Shift+L` by default).
+- Insert any concept link on demand with **Concepts: Choose concept to link from popup** (`Ctrl/Cmd+Shift+L` by default). This opens a searchable list of concepts.
 - Write aliases as regular expressions to cover plurals and phrasings.
 - Use **Link concept** from the editor context menu.
 - Automatically update the concept record when a callout and its block ID move to another note.
@@ -57,9 +57,11 @@ Vault-wide link updates are controlled by **Update links across the vault** in *
 
 Terms such as *product* belong to several concepts at once: the product of topological spaces, the Cartesian product of sets, and the product object in a category. When the link command finds more than one candidate, Concepts opens a popup beside the line you are typing on, listing each concept with its callout type and note so the right one is obvious. Picking an entry keeps the text you typed as the link's display name.
 
-**Concept popup position** in **Settings → Concepts** chooses whether the popup opens below the line (the default) or above it. Either way it flips to the other side when there is not enough room on screen.
+**Concept popup position** in **Settings → Concepts** chooses whether that popup opens below the line (the default) or above it. Either way it flips to the other side when there is not enough room on screen.
 
-**Concepts: Choose concept to link from popup** opens the same popup on demand, so it is available even when nothing is ambiguous. With the cursor on a known term, the list narrows to the concepts claiming it and the typed text is preserved. Otherwise every concept is listed and the chosen one is inserted under its own name. The default hotkey is `Ctrl/Cmd+Shift+L` and can be changed in **Settings → Hotkeys**.
+**Concepts: Choose concept to link from popup** opens a searchable list of concepts on demand, so it is available even when nothing is ambiguous. With the cursor on a known term, the list narrows to the concepts claiming it and the typed text is preserved. Otherwise every concept is listed and the chosen one is inserted under its own name. The default hotkey is `Ctrl/Cmd+Shift+L` and can be changed in **Settings → Hotkeys**.
+
+**Choose concept link interface** in **Settings → Concepts** switches that command between **Search all concepts** (the default) and the small **Popup menu** beside the cursor. The popup that appears when a term belongs to several concepts still uses the small menu, and **Concept popup position** applies to that menu.
 
 ## Regular expression aliases
 
